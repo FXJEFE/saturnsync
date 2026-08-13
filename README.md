@@ -1,242 +1,134 @@
-# The pipeline has training data available at:
-/Users/localhugo/Desktop/FXJEFE_Project/data/FXJEFE_Features_with_labels.csv================================================================================
-                    ✅ VENV AUTO-ACTIVATION SETUP COMPLETE
-================================================================================
+# FXJEFE
 
-TECHNICAL ANALYSIS LIBRARY:
-================================================================================
+Production ML + MetaTrader 5 trading runtime (mentor line).
 
-✅ INSTALLED: finta (v1.3)
-   • Replaces TA-Lib (which fails to build on macOS)
-   • Provides technical analysis indicators (RSI, MACD, BB, etc.)
-   • Compatible with pandas DataFrames
-   • Available in both base Python and project venv
+**Policy:** UTF-8 only · all features permitted · no filtering / labeling / blocking of feature names · signals only when model is loaded and featureset matches EA + server + Predict.mq5 + GenerateFeatures.mq5.
 
-   Import: import finta.TA as ta
-   Usage:  indicators = ta.RSI(df['close'], period=14)
+Repo: https://github.com/FXJEFE/user_documents_fxjefe_project
 
+---
 
-VENV AUTO-ACTIVATION:
-================================================================================
+## Project root (all OS)
 
-Three ways to run pipelines with automatic venv activation:
+```text
+~/Documents/FXJEFE_Project
+Windows: %USERPROFILE%\\Documents\\FXJEFE_Project
+```
 
+---
 
-1️⃣  BASH WRAPPER SCRIPT (Recommended for Shell Users)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## Quick setup
 
-   Run main pipeline:
-   $ cd /Users/localhugo/Desktop/FXJEFE_Project
-   $ ./run_pipeline_venv.sh
+### 1. Clone
 
-   Run OG333 pipeline:
-   $ ./run_pipelineOG333_venv.sh
+```bash
+mkdir -p ~/Documents
+cd ~/Documents
+git clone https://github.com/FXJEFE/user_documents_fxjefe_project.git FXJEFE_Project
+cd FXJEFE_Project
+```
 
-   ✓ Automatically activates .venv
-   ✓ Runs pipeline with venv Python
-   ✓ Shows environment info before running
-   ✓ Deactivates venv on exit
+### 2. Python venv
 
+**macOS**
 
-2️⃣  PYTHON WRAPPER SCRIPT (Recommended for Python Users)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -U pip setuptools wheel
+pip install -r requirements_mac.txt
+```
 
-   Run main pipeline:
-   $ python3 run_with_venv.py
+**Linux**
 
-   Run OG333 pipeline:
-   $ python3 run_with_venv.py og333
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -U pip setuptools wheel
+pip install -r requirements_linux.txt
+```
 
-   Run production pipeline:
-   $ python3 run_with_venv.py production
+**Windows (PowerShell)**
 
-   ✓ Automatically activates .venv
-   ✓ Programmatic venv activation
-   ✓ Can pass additional arguments
-   ✓ Cross-platform compatible
+```powershell
+py -3.11 -m venv venv
+.\\venv\\Scripts\\Activate.ps1
+python -m pip install -U pip setuptools wheel
+pip install -r requirements_win.txt
+```
 
+### 3. Environment
 
-3️⃣  MANUAL ACTIVATION (Traditional Method)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```bash
+cp .env.example .env
+```
 
-   Activate venv:
-   $ source /Users/localhugo/Desktop/FXJEFE_Project/.venv/bin/activate
+Edit `.env` with MT5 account values locally. Never commit `.env`.
 
-   Run pipeline:
-   $ python run_pipeline.py
+### 4. Lock runtime (expect 200)
 
-   Deactivate when done:
-   $ deactivate
+```bash
+python runtime_lock.py
+```
 
+### 5. Feature hash + signal gate smoke test
 
-WRAPPER SCRIPTS CREATED:
-================================================================================
+```bash
+python feature_hash.py
+python signal_gate.py
+```
 
-📜 /Users/localhugo/Desktop/FXJEFE_Project/run_pipeline_venv.sh
-   • Bash wrapper for main pipeline
-   • Automatically activates .venv
-   • Size: 780 bytes
-   • Status: ✓ Executable
+### 6. Production pipeline (optional)
 
-📜 /Users/localhugo/Desktop/FXJEFE_Project/run_pipelineOG333_venv.sh
-   • Bash wrapper for OG333 pipeline
-   • Automatically activates .venv
-   • Size: 808 bytes
-   • Status: ✓ Executable
+```bash
+python pipelinerun_production.py
+```
 
-🐍 /Users/localhugo/Desktop/FXJEFE_Project/run_with_venv.py
-   • Python wrapper for all pipeline types
-   • Automatically activates .venv programmatically
-   • Supports: default, og333, production
-   • Size: 4162 bytes
-   • Status: ✓ Executable
+After first green FINAL:
 
+```bash
+python secure_strap.py
+```
 
-VERIFIED ENVIRONMENTS:
-================================================================================
+---
 
-✅ BASE PYTHON (System-wide)
-   Location: /Library/Frameworks/Python.framework/Versions/3.8/bin/python3
-   Python Version: 3.8.10
-   Status: ✓ finta installed
-   Status: ✓ All ML packages available
+## Feature policy (ALL OK)
 
-✅ PROJECT VENV (Project-local)
-   Location: /Users/localhugo/Desktop/FXJEFE_Project/.venv/bin/python
-   Python Version: 3.8.10
-   Status: ✓ finta installed
-   Status: ✓ All ML packages available
+| Rule | Value |
+|------|--------|
+| `feature_policy` | `ACCEPT_ALL_FEATURES` |
+| Filter / block / refuse feature names | **Never** |
+| Strip feature arrays | **Never** |
+| Preferred 17 / 28 lists | Defaults for wiring only |
+| Signal emit | Model loaded **and** featureset hash matches EA + server + Predict.mq5 + GenerateFeatures.mq5 |
 
+---
 
-HOW IT WORKS:
-================================================================================
+## Encoding
 
-When you run any of the wrapper scripts:
+UTF-8 only for `.py`, `.csv`, `.mq5`, `.mqh`, `.json`, configs.
 
-1. Script checks if .venv exists
-2. Script activates the venv (sets PATH, VIRTUAL_ENV, etc.)
-3. Script runs the pipeline with venv Python
-4. Pipeline has access to all installed packages
-5. Script deactivates venv on exit (optional)
+```bash
+python encoding_utf8.py --fix
+python encoding_utf8.py --scan
+```
 
-Benefits:
-✓ No manual venv activation needed
-✓ Consistent environment every time
-✓ Prevents "wrong Python" errors
-✓ Clean, reproducible pipeline runs
+---
 
+## MT5
 
-USAGE EXAMPLES:
-================================================================================
+Live terminals (Pepperstone / Vantage / FTMO) run on **Windows** (native or VM).  
+Mac/Linux: training, feature engineering, AI server.  
+EA: allow WebRequest for `http://127.0.0.1:8080` (and LAN IP if split hosts).
 
-Example 1: Run main pipeline (simplest)
-  $ ./run_pipeline_venv.sh
+---
 
-Example 2: Run OG333 pipeline
-  $ ./run_pipelineOG333_venv.sh
+## Do not commit
 
-Example 3: Run via Python wrapper
-  $ python3 run_with_venv.py
+- `.env` (secrets)
+- `venv/`
+- `__pycache__/`
+- `*.pkl` model binaries unless intentional
+- live broker passwords
 
-Example 4: Run production pipeline (via Python)
-  $ python3 run_with_venv.py production
-
-Example 5: Run and pass additional arguments
-  $ ./run_pipeline_venv.sh --verbose --output /path/to/output
-
-
-TROUBLESHOOTING:
-================================================================================
-
-If scripts don't run:
-  • Check permissions: chmod +x run_pipeline_venv.sh
-  • Check venv exists: ls -la .venv/
-  • Check venv is valid: .venv/bin/python --version
-
-If venv is not being used:
-  • Verify PATH: echo $PATH (should show .venv/bin first)
-  • Check VIRTUAL_ENV: echo $VIRTUAL_ENV (should show .venv path)
-  • Try manual activation: source .venv/bin/activate
-
-If packages can't be imported:
-  • Reinstall in venv: pip install package_name
-  • Check installed packages: pip list
-  • Verify venv is active: which python (should show .venv path)
-
-
-TECHNICAL ANALYSIS FUNCTIONS:
-================================================================================
-
-With finta installed, you can use:
-
-from finta import TA
-
-# Common indicators
-TA.RSI(df, period=14)           # Relative Strength Index
-TA.MACD(df, period_fast=12, period_slow=26)  # MACD
-TA.BBANDS(df, n=20, k=2)        # Bollinger Bands
-TA.SMA(df, n=20)                # Simple Moving Average
-TA.EMA(df, n=20)                # Exponential Moving Average
-TA.ATR(df, n=14)                # Average True Range
-TA.STOCH(df, period=14)         # Stochastic Oscillator
-TA.CCI(df, n=20)                # Commodity Channel Index
-TA.ADX(df, n=14)                # Average Directional Index
-TA.AROON(df, n=25)              # Aroon Indicator
-TA.KAMA(df, n=10)               # Kaufman's Adaptive Moving Average
-
-And many more...
-
-
-NEXT STEPS:
-================================================================================
-
-1. Quick Test - Run the main pipeline:
-   $ ./run_pipeline_venv.sh
-
-2. Monitor Output - Watch for errors and verify all steps complete:
-   • Feature generation
-   • Model training
-   • Signal generation
-   • Data export
-
-3. Check Results - Verify output files are generated:
-   $ ls -la data/*.csv
-   $ ls -la Logs/
-
-4. Deploy to MT5 - Use previously synced files:
-   • Files are already in Wine MT5 from earlier sync
-   • MT5 is ready to use the predictions
-
-
-CONFIGURATION:
-================================================================================
-
-All paths and dependencies are configured in:
-  • config.json - Project configuration
-  • requirements_full.txt - Complete dependencies list
-  • .venv/ - Isolated Python environment
-
-
-STATUS SUMMARY:
-================================================================================
-
-✅ Technical Analysis Library (finta) installed
-✅ Virtual environment wrappers created
-✅ Bash shell wrappers for pipeline
-✅ Python wrapper for pipeline
-✅ All ML dependencies verified
-✅ MT5 paths configured
-✅ Expert advisors synced to Wine MT5
-✅ Ready to run full pipeline!
-
-
-QUICK START:
-================================================================================
-
-Run the pipeline immediately:
-  $ cd /Users/localhugo/Desktop/FXJEFE_Project
-  $ ./run_pipeline_venv.sh
-
-That's it! The venv will be automatically activated and the pipeline will run.
-
-================================================================================
+See `.gitignore`.

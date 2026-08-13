@@ -55,8 +55,8 @@ def initialize_mt5():
             if not mt5.initialize():
                 logging.error("MT5 initialization failed")
                 return False
-            account = 1512751258  # FTMO Demo account
-            password = "*pb5BEU?s4f"  # FTMO Demo password
+            account = int(os.environ.get("MT5_ACCOUNT", "0"))  # FTMO Demo account
+            password = os.environ.get("MT5_PASSWORD", "")  # FTMO Demo password
             server = "FTMO-Demo"  # FTMO Demo server
             if not mt5.login(account, password=password, server=server):
                 logging.error("MT5 login failed")
