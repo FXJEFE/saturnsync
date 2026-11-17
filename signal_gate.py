@@ -58,21 +58,42 @@ def run(project_dir=None, dry_run=True):
     from stage_support import activate
 
     ctx = activate("signal_gate.log", project_dir=project_dir, dry_run=dry_run)
-    features = list(ctx["config"].get("features") or [])
-    model_loaded = (Path(ctx["config"]["models_path"]) / "my_model.pkl").is_file()
+    from feature_hash import CONTRACT_FEATURES, all_roles_match
+
+    cfg = ctx["config"]
+    contract = list(cfg.get("features") or CONTRACT_FEATURES)
+    roles = {
+        "model": list(cfg.get("features_model") or contract),
+        "ea": list(cfg.get("features_ea") or contract),
+        "server": list(cfg.get("features_server") or contract),
+        "predict_mq5": list(cfg.get("features_predict_mq5") or contract),
+        "generatefeatures_mq5": list(cfg.get("features_generatefeatures_mq5") or contract),
+    }
+    require_match = bool(cfg.get("signal_require_featureset_match", True))
+    matched, hash_info = all_roles_match(roles, mode="ordered")
+    model_loaded = (Path(cfg["models_path"]) / "my_model.pkl").is_file()
     allowed, info = can_emit_signal(
         model_loaded=model_loaded,
-        model_features=features,
-        ea_features=features,
-        server_features=features,
-        predict_mq5_features=features,
-        generatefeatures_mq5_features=features,
+        model_features=roles["model"],
+        ea_features=roles["ea"],
+        server_features=roles["server"],
+        predict_mq5_features=roles["predict_mq5"],
+        generatefeatures_mq5_features=roles["generatefeatures_mq5"],
+        order_matters=True,
     )
+    info["hash"] = hash_info
     info["dry_run"] = bool(dry_run)
-    info["note"] = "EA and mq5 feature lists default to config.json when separate lists are not installed"
-    target = Path(ctx["config"]["state_path"]) / "signal_gate.json"
+    if require_match and not matched:
+        info["emit"] = False
+        info["reasons"] = list(info.get("reasons") or []) + ["featureset hash mismatch; refusing to emit"]
+        allowed = False
+    elif require_match and not allowed:
+        info["reasons"] = list(info.get("reasons") or []) + ["signal_require_featureset_match refused emit"]
+    target = Path(cfg["state_path"]) / "signal_gate.json"
     target.write_text(json.dumps(info, indent=2, default=str) + "\n", encoding="utf-8")
-    logging.info("signal gate emit=%s reasons=%s", allowed, info.get("reasons"))
+    logging.info("signal gate emit=%s match=%s reasons=%s", info.get("emit"), matched, info.get("reasons"))
+    if require_match and not info.get("emit"):
+        return 1
     return 0
 
 

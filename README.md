@@ -32,9 +32,9 @@ setup_windows.bat
 run_pipeline.bat
 ```
 
-`setup_windows.bat` calls `setup_windows.ps1`. If `py -3.8` is missing it downloads the official Python 3.8.10 64-bit installer from python.org and installs it for the current user. It then creates `<PROJECT_ROOT>\.venv` and pip-installs `requirements.txt` (versions pinned for CPython 3.8.10 on 64-bit Windows, including MetaTrader5).
+`setup_windows.bat` calls `setup_windows.ps1`. It installs Python 3.11.9 and Python 3.8.10 (64-bit, per-user) when those launchers are missing, then creates `<PROJECT_ROOT>\fxjefe` (3.11, `requirements.txt`) and `<PROJECT_ROOT>\fxjefe38` (3.8.10, `requirements-fxjefe38.txt`, plus the TA-Lib 0.4.28 cp38 Windows wheel).
 
-`run_pipeline.bat` activates that virtualenv and runs `run_pipeline.py` from `PROJECT_ROOT` in paper mode. Add `--live` only when a real FTMO rules file is in place and you intend to allow `order_send` after the risk gate.
+`run_pipeline.bat` runs `run_pipeline.py` with the `fxjefe` interpreter in paper mode. Feature engineering, `full_pipeline.py`, and the LSTM stage use `fxjefe38` when that venv exists. Add `--live` only when `configftmo.json` is in place and an order may be sent after the risk gate.
 
 Override the root before either command:
 
@@ -48,7 +48,9 @@ Broker login is read from `MT5_ACCOUNT`, `MT5_PASSWORD`, and `MT5_SERVER`. None 
 
 ## FTMO rules
 
-No FTMO config file was found in this repo, in `FXJEFE/user_documents_fxjefe_project`, or in the other FXJEFE trees this account can read. `FXJEFE/BalalaikaBandits` is not accessible (HTTP 404). The pipeline does not invent daily-loss or drawdown numbers. Put the real rules at `PROJECT_ROOT\ftmo_config.json` (or set `FTMO_CONFIG`). Until that file contains recognized limits, `ftmo_rules.py` fails and no later stage runs. The risk gate in `risk_management.py` runs again before `process_trades.py` and is the only place an order is allowed to proceed. Paper mode never calls `order_send`.
+The primary rules file is `PROJECT_ROOT\configftmo.json`. `configftmo.example.json` is checked in with the demo-200k rules: max drawdown 6.66 percent (new entries stop, open positions stay open), per-trade risk 33.3 percent, profit target 11.1 percent, max position size 1.0, max leverage 100, and a margin-level floor of 300. Older `ftmo_config` / `FTMOConfig` filenames and `_pct` aliases still load. `FXJEFE_MQL5_DIR` overrides `mt5_mql5_dir`. The risk gate runs before `process_trades.py`. Paper mode never calls `order_send`.
+
+Verify with `fxjefe\Scripts\python.exe run_pipeline.py --verify`. If `checksums.json` is missing, `python verify_checksums.py --write` creates it and says so when it is absent.
 
 ## Stage order
 
@@ -99,7 +101,7 @@ pip install -r requirements_linux.txt
 
 **Windows (PowerShell)**
 
-Use `setup_windows.bat` (Python 3.8.10 and `<PROJECT_ROOT>\.venv`). Do not create a 3.11 virtualenv for the MT5 pipeline.
+Use `setup_windows.bat`. That creates `fxjefe` (Python 3.11.9) and `fxjefe38` (Python 3.8.10).
 
 ### 3. Environment
 

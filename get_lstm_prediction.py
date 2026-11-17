@@ -35,7 +35,11 @@ def run(project_dir=None, dry_run=True):
     from stage_support import activate
 
     ctx = activate("get_lstm_prediction.log", project_dir=project_dir, dry_run=dry_run)
-    model_path = os.path.join(ctx["config"]["models_path"], "lstm_model.h5")
+    from fxjefe_paths import config_path, models_dir
+
+    # Config is PROJECT_ROOT/config.json (or FXJEFE_CONFIG), not the parent directory.
+    logging.info("config=%s", config_path(ctx["root"]))
+    model_path = os.path.join(str(models_dir(ctx["root"])), "lstm_model.h5")
     if not os.path.isfile(model_path):
         message = "No LSTM model at %s. This repo does not ship one." % model_path
         if dry_run:

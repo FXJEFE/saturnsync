@@ -1,6 +1,7 @@
 # Requires Windows PowerShell 5+ and an existing PROJECT_ROOT.
-# Installs Python 3.8.10 x64 per-user when `py -3.8` is missing, then creates
-# <PROJECT_ROOT>\.venv and installs requirements.txt into it.
+# Creates two virtualenvs:
+#   <PROJECT_ROOT>\fxjefe     Python 3.11.9  (pipeline, golden server, MetaTrader5)
+#   <PROJECT_ROOT>\fxjefe38   Python 3.8.10  (TA-Lib wheel + TensorFlow 2.10.1)
 param(
     [string]$ProjectDir = ""
 )
@@ -16,73 +17,85 @@ function Fail {
 function Resolve-ProjectRoot {
     if ($ProjectDir) { return $ProjectDir }
     if ($env:FXJEFE_PROJECT_DIR) { return $env:FXJEFE_PROJECT_DIR }
+    if ($env:FXJEFE_PROJECT_ROOT) { return $env:FXJEFE_PROJECT_ROOT }
     return (Join-Path $env:USERPROFILE "Documents\FXJEFE_Project")
+}
+
+function Ensure-Python {
+    param(
+        [string]$LauncherArg,
+        [string]$ExactVersion,
+        [string]$InstallerUrl,
+        [string]$InstallDirName
+    )
+    $check = "import struct,sys; raise SystemExit(0 if sys.version.split()[0]=='$ExactVersion' and struct.calcsize('P')*8==64 else 2)"
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        & py $LauncherArg -c $check
+        if ($LASTEXITCODE -eq 0) { return @("py", $LauncherArg) }
+        if ($LASTEXITCODE -eq 2) {
+            Fail "py $LauncherArg is installed but it is not 64-bit CPython $ExactVersion."
+        }
+    }
+    $installer = Join-Path $env:TEMP ("python-" + $ExactVersion + "-amd64.exe")
+    Write-Host "Downloading $InstallerUrl"
+    Invoke-WebRequest -Uri $InstallerUrl -OutFile $installer
+    $installArgs = @("/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=1", "Include_test=0", "Shortcuts=0")
+    $proc = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
+    if ($proc.ExitCode -ne 0) { Fail "Python $ExactVersion installer exited $($proc.ExitCode)" }
+    $pythonExe = Join-Path $env:LOCALAPPDATA ("Programs\Python\" + $InstallDirName + "\python.exe")
+    if (-not (Test-Path -LiteralPath $pythonExe)) {
+        Fail "Python $ExactVersion installer finished but python.exe was not found at $pythonExe."
+    }
+    & $pythonExe -c $check
+    if ($LASTEXITCODE -ne 0) { Fail "Installed interpreter at $pythonExe is not 64-bit Python $ExactVersion." }
+    return @($pythonExe)
+}
+
+function New-ProjectVenv {
+    param([string[]]$PythonCmd, [string]$VenvPath, [string]$Requirements)
+    Write-Host "Creating $VenvPath"
+    if ($PythonCmd.Length -ge 2) {
+        & $PythonCmd[0] $PythonCmd[1] -m venv $VenvPath
+    } else {
+        & $PythonCmd[0] -m venv $VenvPath
+    }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $venvPython = Join-Path $VenvPath "Scripts\python.exe"
+    & $venvPython -m pip install --upgrade "pip==24.0" "setuptools==69.5.1" "wheel==0.43.0"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $venvPython -m pip install -r $Requirements
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    return $venvPython
 }
 
 $source = "default"
 $Root = Resolve-ProjectRoot
 if ($ProjectDir) { $source = "-ProjectDir" }
 elseif ($env:FXJEFE_PROJECT_DIR) { $source = "FXJEFE_PROJECT_DIR" }
+elseif ($env:FXJEFE_PROJECT_ROOT) { $source = "FXJEFE_PROJECT_ROOT" }
 Write-Host "PROJECT_ROOT=$Root (source=$source)"
 if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
     Fail "PROJECT_ROOT does not exist: $Root. Clone this repo to $env:USERPROFILE\Documents\FXJEFE_Project or set FXJEFE_PROJECT_DIR."
 }
 
-$Requirements = Join-Path $PSScriptRoot "requirements.txt"
-if (-not (Test-Path -LiteralPath $Requirements)) {
-    $Requirements = Join-Path $Root "requirements.txt"
-}
-if (-not (Test-Path -LiteralPath $Requirements)) {
-    Fail "requirements.txt was not found next to setup_windows.ps1 or in PROJECT_ROOT."
-}
+$Here = $PSScriptRoot
+$Req311 = Join-Path $Here "requirements.txt"
+$Req38 = Join-Path $Here "requirements-fxjefe38.txt"
+if (-not (Test-Path $Req311)) { $Req311 = Join-Path $Root "requirements.txt" }
+if (-not (Test-Path $Req38)) { $Req38 = Join-Path $Root "requirements-fxjefe38.txt" }
 
-$versionCheck = "import struct,sys; raise SystemExit(0 if sys.version.split()[0]=='3.8.10' and struct.calcsize('P')*8==64 else 2)"
-$PythonExe = $null
-$UseLauncher = $false
-if (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -3.8 -c $versionCheck
-    if ($LASTEXITCODE -eq 0) {
-        $UseLauncher = $true
-    } elseif ($LASTEXITCODE -eq 2) {
-        Fail "py -3.8 is installed but it is not 64-bit CPython 3.8.10. Remove that 3.8 from the py launcher or install the official 3.8.10 x64 build."
-    }
-}
+$Py311 = Ensure-Python -LauncherArg "-3.11" -ExactVersion "3.11.9" -InstallerUrl "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -InstallDirName "Python311"
+$Py38 = Ensure-Python -LauncherArg "-3.8" -ExactVersion "3.8.10" -InstallerUrl "https://www.python.org/ftp/python/3.8.10/python-3.8.10-amd64.exe" -InstallDirName "Python38"
 
-if (-not $UseLauncher) {
-    $Installer = Join-Path $env:TEMP "python-3.8.10-amd64.exe"
-    $Url = "https://www.python.org/ftp/python/3.8.10/python-3.8.10-amd64.exe"
-    Write-Host "Downloading $Url"
-    Invoke-WebRequest -Uri $Url -OutFile $Installer
-    Write-Host "Installing Python 3.8.10 for the current user"
-    $installArgs = @("/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=1", "Include_test=0", "Shortcuts=0")
-    $proc = Start-Process -FilePath $Installer -ArgumentList $installArgs -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-        Fail "Python installer exited $($proc.ExitCode)"
-    }
-    $PythonExe = Join-Path $env:LOCALAPPDATA "Programs\Python\Python38\python.exe"
-    if (-not (Test-Path -LiteralPath $PythonExe)) {
-        Fail "Python 3.8.10 installer finished but python.exe was not found at $PythonExe."
-    }
-    & $PythonExe -c $versionCheck
-    if ($LASTEXITCODE -ne 0) {
-        Fail "Installed interpreter at $PythonExe is not 64-bit Python 3.8.10."
-    }
-}
-
-$Venv = Join-Path $Root ".venv"
-Write-Host "Creating virtualenv $Venv"
-if ($UseLauncher) {
-    & py -3.8 -m venv $Venv
-} else {
-    & $PythonExe -m venv $Venv
-}
+New-ProjectVenv -PythonCmd $Py311 -VenvPath (Join-Path $Root "fxjefe") -Requirements $Req311 | Out-Null
+$Py38Venv = New-ProjectVenv -PythonCmd $Py38 -VenvPath (Join-Path $Root "fxjefe38") -Requirements $Req38
+$TalibWheel = "https://github.com/cgohlke/talib-build/releases/download/v0.4.28/TA_Lib-0.4.28-cp38-cp38-win_amd64.whl"
+Write-Host "Installing TA-Lib from $TalibWheel"
+& $Py38Venv -m pip install $TalibWheel
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$VenvPython = Join-Path $Venv "Scripts\python.exe"
-& $VenvPython -m pip install --upgrade "pip==24.0" "setuptools==69.5.1" "wheel==0.43.0"
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $VenvPython -m pip install -r $Requirements
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-Write-Host "Setup complete. Run: $Root\run_pipeline.bat"
+Write-Host "Setup complete."
+Write-Host "  fxjefe    -> $(Join-Path $Root 'fxjefe\Scripts\python.exe')"
+Write-Host "  fxjefe38  -> $(Join-Path $Root 'fxjefe38\Scripts\python.exe')"
+Write-Host "Run: $(Join-Path $Root 'run_pipeline.bat')"
 exit 0

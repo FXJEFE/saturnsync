@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 CANDIDATE_NAMES = (
+    "configftmo.json",
     "ftmo_config.json",
     "FTMOConfig.json",
     "ftmoconfig.json",
@@ -40,18 +41,18 @@ LIMIT_ALIASES = (
         ("max_daily_loss_pct", "max_daily_loss_percent", "daily_max_loss_pct", "maxDailyLossPercent"),
     ),
     (
-        "total_loss_pct",
+        "drawdown_pct",
         (
+            "max_drawdown_percent",
             "max_overall_loss_pct",
             "max_total_loss_pct",
-            "max_drawdown_percent",
             "max_loss_pct",
             "maxOverallLossPercent",
         ),
     ),
     (
-        "risk_per_trade_pct",
-        ("max_risk_per_trade_pct", "risk_per_trade_pct", "max_risk_percent"),
+        "risk_percent",
+        ("risk_percent", "max_risk_per_trade_pct", "risk_per_trade_pct", "max_risk_percent"),
     ),
     (
         "open_positions",
@@ -59,7 +60,7 @@ LIMIT_ALIASES = (
     ),
     (
         "lot",
-        ("max_lot", "max_lots", "max_position_size"),
+        ("max_position_size", "max_lot", "max_lots"),
     ),
     (
         "trades_today",
@@ -67,16 +68,18 @@ LIMIT_ALIASES = (
     ),
 )
 
-PROFIT_TARGET_KEYS = ("profit_target_pct", "max_profit_target_pct", "profitTargetPercent")
+PROFIT_TARGET_KEYS = (
+    "profit_target_percent",
+    "profit_target_pct",
+    "max_profit_target_pct",
+    "profitTargetPercent",
+)
 LIVE_FLAG_KEYS = ("allow_live_trading", "live_trading_allowed")
 
 NOT_FOUND_MESSAGE = (
-    "No FTMO config file was found. Looked for ftmoconfig / FTMOConfig / ftmo_config "
-    "under PROJECT_ROOT. None exists in this repo (saturnsync), "
-    "FXJEFE/user_documents_fxjefe_project, or the other FXJEFE trees this account can read, "
-    "and FXJEFE/BalalaikaBandits is not accessible (HTTP 404). "
-    "Refusing to invent risk limits. Place the real FTMO rules file at "
-    "PROJECT_ROOT/ftmo_config.json (or set FTMO_CONFIG) and re-run."
+    "No FTMO config file was found. The primary filename is PROJECT_ROOT/configftmo.json "
+    "(see configftmo.example.json). Also checked ftmo_config / FTMOConfig / ftmoconfig. "
+    "Set FTMO_CONFIG to point at a file. Refusing to invent limits that are not in the file."
 )
 
 
@@ -174,7 +177,25 @@ def extract_limits(data):
     for alias in PROFIT_TARGET_KEYS:
         if alias in flat and isinstance(flat[alias], (int, float)) and not isinstance(flat[alias], bool):
             limits["profit_target_pct"] = float(flat[alias])
+            limits["_source_profit_target_pct"] = alias
             break
+    if "min_margin_level_percent" in flat and isinstance(flat["min_margin_level_percent"], (int, float)):
+        limits["min_margin_level_percent"] = float(flat["min_margin_level_percent"])
+    else:
+        limits["min_margin_level_percent"] = 300.0
+    if "max_leverage" in flat and isinstance(flat["max_leverage"], (int, float)):
+        limits["max_leverage"] = float(flat["max_leverage"])
+    else:
+        limits["max_leverage"] = 100.0
+    if "account_balance_ref" in flat and isinstance(flat["account_balance_ref"], (int, float)):
+        limits["account_balance_ref"] = float(flat["account_balance_ref"])
+    if isinstance(flat.get("close_positions_on_stop"), bool):
+        limits["close_positions_on_stop"] = flat["close_positions_on_stop"]
+    else:
+        limits["close_positions_on_stop"] = False
+    for text_key in ("account", "python_executable", "mt5_mql5_dir"):
+        if isinstance(flat.get(text_key), str) and flat[text_key].strip():
+            limits[text_key] = flat[text_key].strip()
     for alias in LIVE_FLAG_KEYS:
         if alias in flat and isinstance(flat[alias], bool):
             limits["allow_live_trading"] = flat[alias]
@@ -183,28 +204,37 @@ def extract_limits(data):
     return limits, recognized
 
 
-def account_metrics(snapshot):
+def account_metrics(snapshot, limits=None):
     snapshot = snapshot or {}
+    limits = limits or {}
     balance = float(snapshot.get("balance") or 0.0)
     equity = float(snapshot.get("equity") if snapshot.get("equity") is not None else balance)
     day_start = float(snapshot.get("day_start_balance") or balance or 0.0)
-    initial = float(snapshot.get("initial_balance") or day_start or 0.0)
+    if limits.get("account_balance_ref"):
+        reference = float(limits["account_balance_ref"])
+    else:
+        reference = float(snapshot.get("initial_balance") or day_start or 0.0)
+    peak = float(snapshot.get("peak_equity") or 0.0)
     daily_loss = 0.0
-    total_loss = 0.0
-    profit = 0.0
     if day_start > 0:
         daily_loss = max(0.0, (day_start - equity) / day_start * 100.0)
-    if initial > 0:
-        total_loss = max(0.0, (initial - equity) / initial * 100.0)
-        profit = (equity - initial) / initial * 100.0
+    drawdowns = []
+    if reference > 0:
+        drawdowns.append((reference - equity) / reference * 100.0)
+    if peak > 0:
+        drawdowns.append((peak - equity) / peak * 100.0)
+    drawdown = max([0.0] + drawdowns) if drawdowns else 0.0
+    profit = ((equity - reference) / reference * 100.0) if reference > 0 else 0.0
     return {
         "daily_loss_pct": daily_loss,
-        "total_loss_pct": total_loss,
+        "drawdown_pct": drawdown,
+        "total_loss_pct": drawdown,
         "profit_pct": profit,
         "open_positions": float(snapshot.get("open_positions") or 0),
         "trades_today": float(snapshot.get("trades_today") or 0),
         "lot": float(snapshot.get("lot") or 0),
         "risk_per_trade_pct": float(snapshot.get("risk_per_trade_pct") or 0),
+        "reference_balance": reference,
     }
 
 
@@ -214,7 +244,7 @@ def evaluate(limits, snapshot, proposed=None):
     ``proposed`` may set ``lot`` and ``risk_per_trade_pct`` for the order that
     would be sent. This function never sends an order.
     """
-    measured = account_metrics(snapshot)
+    measured = account_metrics(snapshot, limits)
     if proposed:
         if proposed.get("lot") is not None:
             measured["lot"] = float(proposed["lot"])
@@ -223,22 +253,110 @@ def evaluate(limits, snapshot, proposed=None):
         if proposed.get("open_positions") is not None:
             measured["open_positions"] = float(proposed["open_positions"])
     reasons = []
+    compare_keys = ("daily_loss_pct", "drawdown_pct", "open_positions", "lot", "trades_today")
     for canonical, _aliases in LIMIT_ALIASES:
-        if canonical not in limits:
+        if canonical not in compare_keys or canonical not in limits:
             continue
         cap = float(limits[canonical])
         actual = float(measured.get(canonical) or 0.0)
-        if actual > cap:
+        reached = actual >= cap if canonical == "drawdown_pct" else actual > cap
+        if reached:
             reasons.append(
                 "FTMO breach: %s %.6g exceeds limit %.6g (from %s)"
                 % (canonical, actual, cap, limits.get("_source_%s" % canonical, canonical))
             )
     if "profit_target_pct" in limits and measured["profit_pct"] >= float(limits["profit_target_pct"]):
         reasons.append(
-            "FTMO profit target reached: %.6g%% >= %.6g%%; no new orders"
+            "FTMO profit target reached: %.6g%% >= %.6g%%; stop opening new trades; open positions stay open"
             % (measured["profit_pct"], float(limits["profit_target_pct"]))
         )
+    if reasons and not limits.get("close_positions_on_stop", False):
+        reasons.append("close_positions_on_stop is false; open positions are not closed or modified")
     return (len(reasons) == 0), reasons
+
+
+def size_lot(terminal, symbol, side, snapshot, limits):
+    """Shrink the lot so margin level and free margin survive the new trade.
+
+    ``order_calc_margin`` plus ``account_info`` override ``risk_percent``.
+    Returns ``(lot, reason)``. ``lot`` is None when the order must be skipped.
+    Never sends an order and never closes a position.
+    """
+    info = terminal.symbol_info(symbol)
+    tick = terminal.symbol_info_tick(symbol)
+    account = terminal.account_info()
+    if info is None or tick is None or account is None:
+        return None, "margin guard skipped the order; symbol or account info is missing"
+    equity = float(getattr(account, "equity", 0) or 0)
+    balance = float(getattr(account, "balance", 0) or equity)
+    if snapshot:
+        if snapshot.get("equity") is not None:
+            equity = float(snapshot["equity"])
+        if snapshot.get("balance") is not None:
+            balance = float(snapshot["balance"])
+    price = float(tick.ask if side == "buy" else tick.bid)
+    step = float(getattr(info, "volume_step", 0.01) or 0.01)
+    vmin = float(getattr(info, "volume_min", step) or step)
+    vmax = float(getattr(info, "volume_max", 1.0) or 1.0)
+    max_lot = float(limits.get("lot") or vmax)
+    max_lot = min(max_lot, vmax)
+    max_leverage = float(limits.get("max_leverage") or 100.0)
+    min_level = float(limits.get("min_margin_level_percent") or 300.0)
+    risk_percent = float(limits.get("risk_percent") or 0.0)
+    reported_leverage = float(getattr(account, "leverage", max_leverage) or max_leverage)
+    leverage = min(reported_leverage, max_leverage) if reported_leverage > 0 else max_leverage
+    if snapshot is not None and snapshot.get("margin") is not None:
+        margin_used = float(snapshot.get("margin") or 0.0)
+    elif snapshot is not None and snapshot.get("margin_free") is not None:
+        margin_used = max(0.0, equity - float(snapshot["margin_free"]))
+    else:
+        margin_used = float(getattr(account, "margin", 0) or 0)
+        if margin_used <= 0 and getattr(account, "margin_free", None) is not None and snapshot is None:
+            margin_used = max(0.0, equity - float(account.margin_free))
+    order_type = terminal.ORDER_TYPE_BUY if side == "buy" else terminal.ORDER_TYPE_SELL
+
+    def margin_for(lot):
+        calc = None
+        try:
+            calc = terminal.order_calc_margin(order_type, symbol, float(lot), price)
+        except Exception:
+            calc = None
+        if calc is None:
+            contract = float(getattr(info, "trade_contract_size", 100000) or 100000)
+            calc = contract * float(lot) * price / max(leverage, 1.0)
+        else:
+            calc = float(calc)
+            if reported_leverage > max_leverage:
+                calc *= reported_leverage / max_leverage
+        return calc
+
+    def fits(lot):
+        added = margin_for(lot)
+        total = margin_used + added
+        free = equity - total
+        if free < 0:
+            return False
+        if total <= 0:
+            return True
+        return (equity / total * 100.0) >= min_level
+
+    budget = balance * (risk_percent / 100.0) if risk_percent > 0 else None
+    lot = max_lot
+    chosen = None
+    while lot + 1e-12 >= vmin:
+        rounded = round(round(lot / step) * step, 8)
+        if rounded < vmin:
+            break
+        within_risk = budget is None or margin_for(rounded) <= budget + 1e-6
+        if within_risk and fits(rounded):
+            chosen = rounded
+            break
+        lot = rounded - step
+    if chosen is None:
+        return None, "margin guard skipped the order; lot cannot keep margin level >= %s and free margin >= 0" % min_level
+    return chosen, "margin guard lot=%s (risk_percent=%s, max_leverage=%s, min_margin_level_percent=%s)" % (
+        chosen, risk_percent, max_leverage, min_level,
+    )
 
 
 def load_snapshot(root, mt5=None):
@@ -260,6 +378,8 @@ def load_snapshot(root, mt5=None):
                 "equity": equity,
                 "day_start_balance": balance,
                 "initial_balance": balance,
+                "margin": float(getattr(info, "margin", 0) or 0),
+                "margin_free": float(getattr(info, "margin_free", equity) or 0),
                 "open_positions": 0,
                 "trades_today": 0,
             }
@@ -292,8 +412,8 @@ def validate_rules(root, snapshot=None):
         for key in recognized
         if key in (
             "daily_loss_pct",
-            "total_loss_pct",
-            "risk_per_trade_pct",
+            "drawdown_pct",
+            "risk_percent",
             "open_positions",
             "lot",
             "trades_today",

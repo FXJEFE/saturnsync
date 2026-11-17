@@ -12,11 +12,11 @@ import os
 import sys
 from pathlib import Path
 
-from ftmo_rules import evaluate, load_snapshot, validate_rules
+from ftmo_rules import evaluate, load_snapshot, size_lot, validate_rules
 
 
-def _latest_signal(config):
-    path = os.path.join(config["data_output_path"], "signals_output.csv")
+def _latest_signal_file(config, name):
+    path = os.path.join(config["data_output_path"], name)
     if not os.path.isfile(path):
         return None
     import pandas as pd
@@ -24,12 +24,17 @@ def _latest_signal(config):
     frame = pd.read_csv(path, encoding="utf-8", low_memory=False)
     if frame.empty or "signal" not in frame.columns:
         return None
-    row = frame.iloc[-1]
+    directional = frame[frame["signal"].astype(str).str.lower().isin(["buy", "sell"])]
+    row = directional.iloc[-1] if not directional.empty else frame.iloc[-1]
     return {
         "symbol": str(row["symbol"]) if "symbol" in frame.columns else "",
         "signal": str(row["signal"]).lower(),
         "price": float(row["price"]) if "price" in frame.columns else 0.0,
     }
+
+
+def _latest_signal(config):
+    return _latest_signal_file(config, "signals_output.csv")
 
 
 def run(project_dir=None, dry_run=True):
@@ -43,38 +48,50 @@ def run(project_dir=None, dry_run=True):
     terminal.initialize()
     try:
         snapshot = load_snapshot(root, terminal)
+        loaded = validate_rules(root, snapshot)
+        if not loaded["ok"]:
+            for reason in loaded["reasons"]:
+                logging.error(reason)
+            _write_gate(config, False, loaded["reasons"], None)
+            return 1
+        limits = loaded["limits"]
+        signal = _latest_signal(config)
+        strategy_signal = _latest_signal_file(config, "strategy_signals.csv")
+        if strategy_signal:
+            signal = strategy_signal
+        proposed = None
+        ok, reasons = evaluate(limits, snapshot, None)
+        if ok and signal and signal["signal"] in ("buy", "sell"):
+            lot, sizing_reason = size_lot(terminal, signal["symbol"], signal["signal"], snapshot, limits)
+            logging.info(sizing_reason)
+            if lot is None:
+                reasons = list(reasons) + [sizing_reason]
+            else:
+                proposed = {
+                    "symbol": signal["symbol"],
+                    "side": signal["signal"],
+                    "lot": lot,
+                    "risk_per_trade_pct": float(limits.get("risk_percent") or 0.0),
+                    "open_positions": float((snapshot or {}).get("open_positions") or 0) + 1,
+                    "close_positions_on_stop": bool(limits.get("close_positions_on_stop")),
+                }
+                ok, reasons = evaluate(limits, snapshot, proposed)
+        elif not signal or signal["signal"] not in ("buy", "sell"):
+            reasons = list(reasons) + ["No directional signal; account limits already checked"]
+        if not dry_run and limits.get("allow_live_trading") is False:
+            ok = False
+            reasons = list(reasons) + ["FTMO config allow_live_trading is false"]
+        if limits.get("close_positions_on_stop"):
+            logging.error("close_positions_on_stop is true in the rules file; this pipeline still does not close positions")
+        for reason in reasons:
+            if ok:
+                logging.info(reason)
+            else:
+                logging.error(reason)
+        _write_gate(config, ok, reasons, proposed)
+        return 0 if ok else 1
     finally:
         terminal.shutdown()
-    loaded = validate_rules(root, snapshot)
-    if not loaded["ok"]:
-        for reason in loaded["reasons"]:
-            logging.error(reason)
-        _write_gate(config, False, loaded["reasons"], None)
-        return 1
-    limits = loaded["limits"]
-    signal = _latest_signal(config)
-    proposed = None
-    if signal and signal["signal"] in ("buy", "sell"):
-        lot = 0.01
-        if "lot" in limits:
-            lot = min(lot, float(limits["lot"]))
-        proposed = {
-            "symbol": signal["symbol"],
-            "side": signal["signal"],
-            "lot": lot,
-            "risk_per_trade_pct": float(limits.get("risk_per_trade_pct") or 0.0),
-            "open_positions": float((snapshot or {}).get("open_positions") or 0) + 1,
-        }
-        ok, reasons = evaluate(limits, snapshot, proposed)
-    else:
-        ok, reasons = True, ["No directional signal; account limits already checked"]
-    if not dry_run and limits.get("allow_live_trading") is False:
-        ok = False
-        reasons = list(reasons) + ["FTMO config allow_live_trading is false"]
-    for reason in reasons:
-        logging.info(reason) if ok else logging.error(reason)
-    _write_gate(config, ok, reasons, proposed)
-    return 0 if ok else 1
 
 
 def _write_gate(config, passed, reasons, proposed):

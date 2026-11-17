@@ -104,10 +104,22 @@ def _under_root(root, value, default_rel):
     return path
 
 
-def load_config(root):
-    """Load ``config.json`` and force data/model/log paths under ``root``."""
+def config_file(root):
+    """FXJEFE_CONFIG overrides the config path. Relative values stay under PROJECT_ROOT."""
     root = Path(root)
-    path = root / "config.json"
+    override = (os.environ.get("FXJEFE_CONFIG") or "").strip()
+    if override:
+        path = Path(os.path.expanduser(override))
+        if not path.is_absolute():
+            path = root / path
+        return path
+    return root / "config.json"
+
+
+def load_config(root):
+    """Load config.json and force data/model/log paths under ``root``."""
+    root = Path(root)
+    path = config_file(root)
     if not path.is_file():
         raise ProjectRootError("config.json not found under PROJECT_ROOT: %s" % path)
     last_error = None

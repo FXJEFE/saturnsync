@@ -24,6 +24,11 @@ def _bind(cfg):
         folder = (config.get(key) or '').strip()
         if folder:
             SOURCE_CANDIDATES.append(os.path.join(folder, FILENAME))
+    try:
+        from fxjefe_paths import mql5_subdir
+        SOURCE_CANDIDATES.append(os.path.join(str(mql5_subdir("Files")), FILENAME))
+    except Exception:
+        pass
 
 def best_source():
     candidates = [(p, os.path.getmtime(p)) for p in SOURCE_CANDIDATES if os.path.exists(p)]

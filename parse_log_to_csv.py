@@ -3,36 +3,8 @@ import json
 import os
 import logging
 
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
-import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
+from fxjefe_paths import data_dir, load_config, logs_dir, project_root, require_root
+config = {}
 import pandas as pd
 import re
 import json
@@ -41,8 +13,10 @@ import os
 from multiprocessing import Pool, cpu_count, freeze_support
 import json
 
-with open('config.json', 'r') as f:
-    config = json.load(f)
+try:
+    config = load_config(require_root())
+except Exception:
+    config = {"data_output_path": str(data_dir(project_root())), "log_path": str(logs_dir(project_root()))}
 
 log_file = os.path.join(config['data_output_path'], 'log.txt')
 output_csv = os.path.join(config['data_output_path'], 'FXJEFE_Features.csv')
@@ -52,8 +26,9 @@ logging.basicConfig(level=logging.INFO, filename='parse_log.log', filemode='a',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 # File paths (adjusted for your folder)
-LOG_PATH = "C:/Users/Administrator/Documents/FXJEFE_Project/log.txt"
-OUTPUT_PATH = "C:/Users/Administrator/Documents/FXJEFE_Project/FXJEFE_Features.csv"
+_root = project_root()
+LOG_PATH = str(logs_dir(_root) / "log.txt")
+OUTPUT_PATH = str(data_dir(_root) / "FXJEFE_Features.csv")
 
 # Regex patterns
 api_pattern = re.compile(r"(\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}).*Sending API request for (\w+\.r): ({.*})")
@@ -68,11 +43,11 @@ for enc in encodings:
             log_lines = file.readlines()
         logging.info(f"Successfully read log with {enc} encoding")
         break
-    except UnicodeDecodeError as e:
+    except (UnicodeDecodeError, OSError) as e:
         logging.error(f"Failed to decode with {enc}: {e}")
 if log_lines is None:
-    logging.error("All encodings failed. Check log.txt manually.")
-    exit(1)
+    logging.error("All encodings failed or log.txt is missing. Check %s", LOG_PATH)
+    log_lines = []
 
 # Parse individual log lines
 def parse_line(line):

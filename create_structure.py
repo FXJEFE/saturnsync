@@ -3,39 +3,10 @@ import json
 import os
 import logging
 
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
+from fxjefe_paths import data_dir, project_root
 
 # Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
-import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
-import os
-
-root_dir = "FXJEFE_Trading_System"
+root_dir = str(data_dir(project_root()))
 
 structure = {
     "config.json": None,
@@ -73,5 +44,6 @@ def create_structure(base_path, structure):
                 os.makedirs(path)
             create_structure(path, content)
 
-create_structure(root_dir, structure)
-print(f"Folder structure '{root_dir}' created successfully!")
+if __name__ == "__main__":
+    create_structure(root_dir, structure)
+    print("Folder structure '%s' created successfully!" % root_dir)

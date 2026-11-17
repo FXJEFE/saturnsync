@@ -61,6 +61,7 @@ class PaperTerminal(object):
             server=os.environ.get("MT5_SERVER", "") or "paper",
             balance=100000.0,
             equity=100000.0,
+            margin=0.0,
             margin_free=100000.0,
             leverage=100,
         )
@@ -115,7 +116,10 @@ class PaperTerminal(object):
         return rows
 
     def order_calc_margin(self, order_type, symbol, volume, price):
-        return float(volume) * float(price) * 0.01
+        info = self.symbol_info(symbol)
+        contract = float(getattr(info, "trade_contract_size", 100000) or 100000)
+        leverage = float(getattr(self.account_info(), "leverage", 100) or 100)
+        return contract * float(volume) * float(price) / max(leverage, 1.0)
 
     def order_send(self, request):
         self.order_send_calls += 1
