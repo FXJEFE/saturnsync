@@ -1,65 +1,44 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""Build training_data_from_signals.csv from the signal column.
+
+``training_data.csv`` is owned by generate_labels.py, which runs after this
+stage, so this script no longer overwrites that file at import time.
+"""
+from __future__ import annotations
+
 import logging
-import pandas as pd
+import os
+import sys
 
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
 
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
 
-# Set up logging
-log_file = os.path.join(config['log_path'], 'generate_training_data.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
+    ctx = activate("generate_training_data.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    import pandas as pd
 
-# Read the features CSV
-features_path = os.path.join(config['data_output_path'], 'FXJEFE_Features.csv')
-try:
-    # Try UTF-8 with BOM first, then fall back to UTF-8
-    try:
-        df = pd.read_csv(features_path, encoding='utf-8-sig')
-    except UnicodeDecodeError:
-        df = pd.read_csv(features_path, encoding='utf-8')
-except Exception as e:
-    logging.error(f"Failed to read {features_path}: {e}")
-    exit(1)
-logging.info(f"Number of rows in FXJEFE_Features.csv: {len(df)}")
+    source = os.path.join(config["data_path"], "FXJEFE_Features.csv")
+    target = os.path.join(config["data_output_path"], "training_data_from_signals.csv")
+    if not os.path.isfile(source):
+        logging.error("Features file not found: %s", source)
+        return 1
+    frame = pd.read_csv(source, encoding="utf-8-sig", low_memory=False)
+    if "signal" not in frame.columns:
+        logging.error("signal column missing in %s", source)
+        return 1
+    frame["signal"] = pd.to_numeric(frame["signal"], errors="coerce")
+    frame["label"] = frame["signal"].map({1: 1, -1: -1, 0: 0}).fillna(0)
+    frame.to_csv(target, index=False, encoding="utf-8")
+    logging.info("Wrote %s (%s rows)", target, len(frame))
+    return 0
 
-# Check if 'signal' column exists
-if 'signal' not in df.columns:
-    logging.error("Error: 'signal' column is missing in FXJEFE_Features.csv.")
-    logging.error(f"Available columns: {df.columns.tolist()}")
-    exit(1)
 
-# Ensure signal is numeric
-df['signal'] = pd.to_numeric(df['signal'], errors='coerce')
+def main(argv=None):
+    from stage_support import call_main
 
-# Map signals to labels
-df['label'] = df['signal'].map({1: 1, -1: -1, 0: 0}).fillna(0)
-logging.info(f"Unique values in label column: {df['label'].unique()}")
+    return call_main(run, argv)
 
-training_data_path = os.path.join(config['data_output_path'], 'training_data.csv')
-try:
-    df.to_csv(training_data_path, index=False, encoding='utf-8')
-    logging.info(f"training_data.csv generated successfully at {training_data_path}")
-except Exception as e:
-    logging.error(f"Failed to save training_data.csv to {training_data_path}: {e}")
-    exit(1)
+
+if __name__ == "__main__":
+    sys.exit(main())

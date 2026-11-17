@@ -1,89 +1,54 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""Score the labeled feature file with models/ensemble_model.pkl when it exists."""
+from __future__ import annotations
+
 import logging
-
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import pandas as pd
-import numpy as np
-import joblib
-import logging
-import json
 import os
+import sys
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\Logs\\ensemble_predictions.log'),
-        logging.StreamHandler()
-    ]
-)
 
-def load_config():
-    config_path = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-    try:
-        with open(config_path, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logging.error(f"Failed to load config.json: {e}")
-        exit(1)
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
 
-def generate_predictions(data, features, model_path):
-    try:
-        model = joblib.load(model_path)
-        X = data[features]
-        predictions = model.predict(X)
-        probabilities = model.predict_proba(X)
-        
-        data['signal'] = np.where(predictions == 1, 'buy', np.where(predictions == -1, 'sell', 'hold'))
-        data['confidence'] = probabilities.max(axis=1)
-        
-        logging.info("Predictions generated")
-        return data
-    except Exception as e:
-        logging.error(f"Error generating predictions: {e}")
-        return None
+    ctx = activate("ensemble_predictions.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    model_path = os.path.join(config["models_path"], "ensemble_model.pkl")
+    data_path = os.path.join(config["data_output_path"], "FXJEFE_Features_with_labels.csv")
+    if not os.path.isfile(model_path):
+        message = "ensemble_model.pkl is not in %s" % config["models_path"]
+        if dry_run:
+            logging.warning("%s; paper mode skips ensemble scoring", message)
+            return 0
+        logging.error(message)
+        return 1
+    if not os.path.isfile(data_path):
+        logging.error("Labeled features not found: %s", data_path)
+        return 1
+    import joblib
+    import numpy as np
+    import pandas as pd
 
-def main():
-    config = load_config()
-    data_path = os.path.join(config['data_output_path'], 'FXJEFE_Features_with_labels.csv')
-    model_path = os.path.join(config['models_path'], 'ensemble_model.pkl')
-    output_path = os.path.join(config['data_output_path'], 'FXJEFE_Predictions.csv')
-    
-    try:
-        data = pd.read_csv(data_path)
-        result = generate_predictions(data, config['features'], model_path)
-        if result is not None:
-            result.to_csv(output_path, index=False)
-            logging.info(f"Predictions saved to {output_path}")
-    except Exception as e:
-        logging.error(f"Error processing data: {e}")
+    model = joblib.load(model_path)
+    frame = pd.read_csv(data_path, encoding="utf-8", low_memory=False)
+    features = [name for name in (config.get("features") or []) if name in frame.columns]
+    if not features:
+        logging.error("No configured features are present in %s", data_path)
+        return 1
+    predictions = model.predict(frame[features])
+    frame["signal"] = np.where(predictions == 1, "buy", np.where(predictions == -1, "sell", "hold"))
+    if hasattr(model, "predict_proba"):
+        frame["confidence"] = model.predict_proba(frame[features]).max(axis=1)
+    target = os.path.join(config["data_output_path"], "FXJEFE_Predictions.csv")
+    frame.to_csv(target, index=False, encoding="utf-8")
+    logging.info("Wrote %s", target)
+    return 0
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

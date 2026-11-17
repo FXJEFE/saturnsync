@@ -50,6 +50,59 @@ def can_emit_signal(*, model_loaded: bool, model_features=None, ea_features=None
     info["reasons"].append("model loaded + featureset aligned")
     return True, info
 
+def run(project_dir=None, dry_run=True):
+    """Compare configured feature lists. A refusal to emit is a successful gate decision."""
+    import json
+    import logging
+    from pathlib import Path
+    from stage_support import activate
+
+    ctx = activate("signal_gate.log", project_dir=project_dir, dry_run=dry_run)
+    from feature_hash import CONTRACT_FEATURES, all_roles_match
+
+    cfg = ctx["config"]
+    contract = list(cfg.get("features") or CONTRACT_FEATURES)
+    roles = {
+        "model": list(cfg.get("features_model") or contract),
+        "ea": list(cfg.get("features_ea") or contract),
+        "server": list(cfg.get("features_server") or contract),
+        "predict_mq5": list(cfg.get("features_predict_mq5") or contract),
+        "generatefeatures_mq5": list(cfg.get("features_generatefeatures_mq5") or contract),
+    }
+    require_match = bool(cfg.get("signal_require_featureset_match", True))
+    matched, hash_info = all_roles_match(roles, mode="ordered")
+    model_loaded = (Path(cfg["models_path"]) / "my_model.pkl").is_file()
+    allowed, info = can_emit_signal(
+        model_loaded=model_loaded,
+        model_features=roles["model"],
+        ea_features=roles["ea"],
+        server_features=roles["server"],
+        predict_mq5_features=roles["predict_mq5"],
+        generatefeatures_mq5_features=roles["generatefeatures_mq5"],
+        order_matters=True,
+    )
+    info["hash"] = hash_info
+    info["dry_run"] = bool(dry_run)
+    if require_match and not matched:
+        info["emit"] = False
+        info["reasons"] = list(info.get("reasons") or []) + ["featureset hash mismatch; refusing to emit"]
+        allowed = False
+    elif require_match and not allowed:
+        info["reasons"] = list(info.get("reasons") or []) + ["signal_require_featureset_match refused emit"]
+    target = Path(cfg["state_path"]) / "signal_gate.json"
+    target.write_text(json.dumps(info, indent=2, default=str) + "\n", encoding="utf-8")
+    logging.info("signal gate emit=%s match=%s reasons=%s", info.get("emit"), matched, info.get("reasons"))
+    if require_match and not info.get("emit"):
+        return 1
+    return 0
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
+
 if __name__ == "__main__":
-    f = ["price", "atr", "rsi"]
-    print(can_emit_signal(model_loaded=True, model_features=f, ea_features=f, server_features=f, predict_mq5_features=f, generatefeatures_mq5_features=f))
+    import sys
+    sys.exit(main())

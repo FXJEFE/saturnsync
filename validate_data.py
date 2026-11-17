@@ -7,50 +7,33 @@ Validates FXJEFE_Features.csv after mt5_data_sync:
   - raises SystemExit(1) on critical failure (file missing, no rows)
 """
 import os
-import sys
-import json
 import logging
 import pandas as pd
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-os.makedirs(config['log_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'validate_data.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-
-MODEL_FEATURES = [c for c in config['features'] if c != 'price']  # 27 indicators
+config = {}
 
 
 def main():
+    model_features = [c for c in config['features'] if c != 'price']
     csv_path = os.path.join(config['data_path'], 'FXJEFE_Features.csv')
 
     if not os.path.exists(csv_path):
         logging.error(f"Data file not found: {csv_path}")
         logging.error("Run mt5_data_sync.py (or GenerateFeatures.mq5) first.")
-        sys.exit(1)
+        return 1
 
     df = pd.read_csv(csv_path, encoding='utf-8-sig', low_memory=False)
     logging.info(f"Loaded {len(df)} rows, {len(df.columns)} columns from {csv_path}")
 
     if len(df) == 0:
         logging.error("CSV file is empty.")
-        sys.exit(1)
+        return 1
 
     if len(df) < 500:
         logging.warning(f"Only {len(df)} rows — re-run GenerateFeatures.mq5 with more History_Bars.")
 
     # Check required columns
-    required = ['time', 'symbol', 'price'] + MODEL_FEATURES
+    required = ['time', 'symbol', 'price'] + model_features
     missing_cols = [c for c in required if c not in df.columns]
     if missing_cols:
         logging.warning(f"Missing columns (will be filled by generate_labels.py): {missing_cols}")
@@ -75,7 +58,24 @@ def main():
         logging.info(f"Rows per symbol: {counts}")
 
     logging.info("Data validation complete.")
+    return 0
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config
+    ctx = activate("validate_data.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    return main()
+
+
+def cli(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    sys.exit(cli())

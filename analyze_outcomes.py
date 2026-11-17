@@ -1,61 +1,37 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""Summarize trade outcomes. An empty book is a report, not a broker call."""
+from __future__ import annotations
+
 import logging
-
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
-import logging
-import pandas as pd
 import os
+import sys
 
-config_path = r"C:\Users\LarryLocal\Documents\FXJEFE_Project\config.json"
-with open(config_path, 'r') as f:
-    config = json.load(f)
 
-logging.basicConfig(
-    filename=os.path.join(config['log_path'], 'pipeline.log'),
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
 
-def analyze_outcomes():
-    csv_path = os.path.join(config['data_output_path'], 'FXJEFE_trades_outcomes.csv')
-    if not os.path.exists(csv_path):
-        logging.error(f"Trade outcomes file not found: {csv_path}")
-        return
-    
-    df = pd.read_csv(csv_path)
-    total_trades = len(df)
-    total_profit = df['profit'].sum()
-    win_rate = (df['profit'] > 0).mean() * 100 if total_trades > 0 else 0
-    
-    logging.info(f"Trade Analysis: Total Trades = {total_trades}, Total Profit = {total_profit:.2f}, Win Rate = {win_rate:.2f}%")
+    ctx = activate("analyze_outcomes.log", project_dir=project_dir, dry_run=dry_run)
+    path = os.path.join(ctx["config"]["data_output_path"], "FXJEFE_trades_outcomes.csv")
+    if not os.path.isfile(path):
+        logging.info("No outcomes file yet: %s", path)
+        return 0
+    import pandas as pd
+
+    frame = pd.read_csv(path)
+    if frame.empty or "profit" not in frame.columns:
+        logging.info("Outcomes file has nothing to summarize")
+        return 0
+    profit = pd.to_numeric(frame["profit"], errors="coerce").fillna(0.0)
+    win_rate = float((profit > 0).mean() * 100.0) if len(profit) else 0.0
+    logging.info("Trades=%s profit=%s win_rate=%.2f", len(frame), float(profit.sum()), win_rate)
+    return 0
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
 
 if __name__ == "__main__":
-    analyze_outcomes()
+    sys.exit(main())

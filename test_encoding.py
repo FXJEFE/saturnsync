@@ -3,36 +3,8 @@ import json
 import os
 import logging
 
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
-import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
+from fxjefe_paths import load_config, require_root
+config = {}
 import pandas as pd
 import os
 
@@ -43,7 +15,8 @@ files = [
     'FXJEFE_trades.csv'
 ]
 
-base_dir = 'C:\\Users\\LarryLocal\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Files'
+from fxjefe_paths import mql5_subdir
+base_dir = str(mql5_subdir("Files"))
 
 for file in files:
     try:

@@ -33,7 +33,7 @@ INDICATORS_DIR = os.path.join(EXPERTS_ROOT, "indicators")
 MODELS_DIR = os.path.join(EXPERTS_ROOT, "models")
 
 # Wine MT5 paths (Wine maps Z: to macOS root)
-# Example: C:\Users\LarryLocal\... becomes Z:\Users\localhugo\...
+# Example: a Windows profile path is rewritten to the FXJEFE_MQL5_DIR terminal folder.
 WINE_TERMINAL_PRIMARY = "Z:\\Users\\localhugo\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5"
 WINE_TERMINAL_SECONDARY = "Z:\\Users\\localhugo\\AppData\\Roaming\\MetaQuotes\\Terminal\\AE2CC2E013FDE1E3CDF010AA51C60400\\MQL5"
 
@@ -313,14 +313,15 @@ EXPERTS_SRC="{EXPERTS_ROOT}"
 DATA_SRC="{DATA_PATH}"
 
 # Wine terminal paths (Z: maps to macOS root)
-WINE_PRIMARY_EXPERTS="${{WINEPREFIX:-$HOME/.wine}}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Experts"
-WINE_SECONDARY_EXPERTS="${{WINEPREFIX:-$HOME/.wine}}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/AE2CC2E013FDE1E3CDF010AA51C60400/MQL5/Experts"
+MQL5_DIR="${{FXJEFE_MQL5_DIR}}"
+WINE_PRIMARY_EXPERTS="$MQL5_DIR/Experts"
+WINE_SECONDARY_EXPERTS="$MQL5_DIR/Experts"
 
-WINE_PRIMARY_INCLUDE="${{WINEPREFIX:-$HOME/.wine}}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Include"
-WINE_SECONDARY_INCLUDE="${{WINEPREFIX:-$HOME/.wine}}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/AE2CC2E013FDE1E3CDF010AA51C60400/MQL5/Include"
+WINE_PRIMARY_INCLUDE="$MQL5_DIR/Include"
+WINE_SECONDARY_INCLUDE="$MQL5_DIR/Include"
 
-WINE_PRIMARY_INDICATORS="${{WINEPREFIX:-$HOME/.wine}}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Indicators"
-WINE_SECONDARY_INDICATORS="${{WINEPREFIX:-$HOME/.wine}}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/AE2CC2E013FDE1E3CDF010AA51C60400/MQL5/Indicators"
+WINE_PRIMARY_INDICATORS="$MQL5_DIR/Indicators"
+WINE_SECONDARY_INDICATORS="$MQL5_DIR/Indicators"
 
 echo "🔄 Syncing MT5 Expert Advisors to Wine MT5 Terminal..."
 echo "Platform: macOS M1 (Tahoe 26) → Wine → MT5"
@@ -470,12 +471,10 @@ Wine mounts macOS filesystem at `Z:`. From Wine terminal (cmd.exe):
 
 ```cmd
 REM Copy advisors
-copy Z:\\Users\\localhugo\\Desktop\\FXJEFE_Project\\data\\mt5_experts\\advisors\\*.ex5 ^
-      "C:\\Users\\LarryLocal\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Experts\\"
+copy advisors\\*.ex5 "%FXJEFE_MQL5_DIR%\\Experts\\"
 
 REM Copy includes
-copy Z:\\Users\\localhugo\\Desktop\\FXJEFE_Project\\data\\mt5_experts\\includes\\*.mqh ^
-      "C:\\Users\\LarryLocal\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Include\\"
+copy includes\\*.mqh "%FXJEFE_MQL5_DIR%\\Include\\"
 ```
 
 ## Manifest File
@@ -501,7 +500,7 @@ Use this to verify integrity and track versions.
 
 ### "File not found in MT5"
 - Check that `.ex5` file is in `mt5_experts/advisors/`
-- Verify Wine path exists: `~/.wine/drive_c/users/LarryLocal/...`
+- Verify the MQL5 directory from FXJEFE_MQL5_DIR exists.
 - Run sync script again: `./sync_to_wine_mt5.sh`
 
 ### "EA won't load in MT5"
@@ -516,7 +515,7 @@ Use this to verify integrity and track versions.
 
 ### Wine MT5 path not found
 - Find your Wine prefix: `echo $WINEPREFIX` or `~/.wine/`
-- Verify terminal ID exists: `ls ~/.wine/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/`
+- Verify the terminal folder named by FXJEFE_MQL5_DIR.
 - Update script with correct terminal ID if needed
 
 ## File Statistics

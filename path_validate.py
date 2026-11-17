@@ -261,9 +261,15 @@ def check_feature_config(project_root: str) -> Dict[str, Any]:
         cfg = json.loads(cand.read_text(encoding="utf-8"))
         feats = cfg.get("features") or []
         item["features_count"] = len(feats)
-        if len(feats) != 17:
+        declared = cfg.get("features_count")
+        if isinstance(declared, int) and declared != len(feats):
             item["ok"] = False
-            item["issues"].append(f"expected 17 features, found {len(feats)}")
+            item["issues"].append("features_count is %s but features has %s" % (declared, len(feats)))
+        elif len(feats) != 17:
+            item["issues"].append(
+                "feature list length is %s; the older 17-count is not a hard failure"
+                % len(feats)
+            )
         forbidden = cfg.get("features_forbidden") or []
         if "garch_vol" not in forbidden:
             item["issues"].append("garch_vol not listed in features_forbidden (recommended)")
@@ -402,14 +408,42 @@ def validate_all(
     return report
 
 
-def main() -> int:
+def run(project_dir=None, dry_run=True) -> int:
+    """Validate paths under PROJECT_ROOT. Does not send orders."""
+    from path_resolver import require_project_root
+
+    root = require_project_root(project_dir)
+    os.environ["FXJEFE_PROJECT_DIR"] = str(root)
+    report = validate_all(
+        create_missing_dirs=True,
+        require_raw_csv=False,
+    )
+    state = root / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    out = state / "path_validation_latest.json"
+    out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    log("report -> %s" % out)
+    return 0 if report["ok"] else 1
+
+
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="FXJEFE automated path validation")
+    ap.add_argument("--project-dir", default=None)
+    ap.add_argument("--live", action="store_true")
     ap.add_argument("--json-out", default="", help="Write full report JSON to this path")
     ap.add_argument("--require-raw-csv", action="store_true", help="Fail if no CSV in data_csv_raw")
     ap.add_argument("--no-create", action="store_true", help="Do not auto-create missing directories")
     ap.add_argument("--fix", action="store_true")
     ap.add_argument("--print-map", action="store_true", help="Print resolved path map")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+    if getattr(args, "project_dir", None):
+        os.environ["FXJEFE_PROJECT_DIR"] = args.project_dir
+    from path_resolver import ProjectRootError, require_project_root
+    try:
+        require_project_root(getattr(args, "project_dir", None))
+    except ProjectRootError as exc:
+        bad(str(exc))
+        return 1
 
     report = validate_all(
         create_missing_dirs=not args.no_create,

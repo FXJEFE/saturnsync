@@ -3,50 +3,73 @@ check_model_features.py
 Loads my_model.pkl and verifies the number of features matches config.
 """
 import os
-import json
 import logging
-import joblib
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-os.makedirs(config['log_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'check_model_features.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+config = {}
 
 
 def main():
+    import joblib
+
     model_path = os.path.join(config['models_path'], 'my_model.pkl')
 
     if not os.path.exists(model_path):
         logging.error(f"Model not found: {model_path}")
         logging.error("Run train_models.py first.")
-        raise FileNotFoundError(model_path)
+        return 1
 
-    model = joblib.load(model_path)
-    n_model    = model.n_features_in_
-    n_config   = len(config['features'])
-    status     = "OK" if n_model == n_config else "MISMATCH"
+    model = _load_model(model_path)
+    n_model = _model_feature_count(model)
+    from feature_hash import CONTRACT_FEATURES
 
-    logging.info(f"Model feature count : {n_model}")
-    logging.info(f"Config feature count: {n_config}  ({config['features']})")
-    logging.info(f"Feature count check : {status}")
-
-    if status != "OK":
-        raise ValueError(
-            f"Feature count mismatch — model expects {n_model}, config has {n_config}. "
-            "Retrain the model with the current config['features']."
+    n_contract = len(CONTRACT_FEATURES)
+    n_config = len(config['features'])
+    logging.info("Model feature count : %s", n_model)
+    logging.info("Contract feature count: %s", n_contract)
+    logging.info("Config feature count: %s", n_config)
+    if n_model != n_contract or n_config != n_contract:
+        logging.error(
+            "MODEL INPUT SIGNATURE FAIL: model has %s inputs, config lists %s, contract is the ordered %s-feature vector. A 28-input model does not match this contract.",
+            n_model,
+            n_config,
+            n_contract,
         )
+        return 1
+    logging.info("Feature count check : OK")
+    return 0
+
+
+def _load_model(path):
+    if str(path).lower().endswith(".onnx"):
+        import onnxruntime
+
+        return onnxruntime.InferenceSession(str(path))
+    import joblib
+
+    return joblib.load(path)
+
+
+def _model_feature_count(model):
+    if hasattr(model, "n_features_in_"):
+        return int(model.n_features_in_)
+    inputs = getattr(model, "get_inputs", None)
+    if callable(inputs):
+        shape = inputs()[0].shape
+        if shape and shape[-1] not in (None, "None"):
+            return int(shape[-1])
+    raise RuntimeError("model does not expose an input signature")
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config
+    ctx = activate("check_model_features.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    return main()
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

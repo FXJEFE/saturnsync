@@ -60,8 +60,7 @@ def print_status():
     print("""
 1. VERIFY WINE PATHS:
    Check if your Wine MT5 terminals exist at:
-   ~/.wine/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/
-   ~/.wine/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/AE2CC2E013FDE1E3CDF010AA51C60400/
+   The directory from FXJEFE_MQL5_DIR (Experts, Include, Files).
 
 2. RUN SYNC SCRIPT:
    cd /Users/localhugo/Desktop/FXJEFE_Project

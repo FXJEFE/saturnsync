@@ -27,31 +27,26 @@ import logging
 import warnings
 import numpy as np
 import pandas as pd
-import talib
 import joblib
 from datetime import datetime
-from scipy import stats as scipy_stats
 
 warnings.filterwarnings('ignore')
 
-# ========================= CONFIG =========================
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-MODELS_DIR = config['models_path']
-DATA_DIR = config['data_output_path']
-HIST_DIR = os.path.join(DATA_DIR, 'Historical', 'enhanced')
-os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(config['log_path'], exist_ok=True)
-
-LOG_FILE = os.path.join(config['log_path'], f'full_pipeline_{datetime.now():%Y%m%d_%H%M%S}.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler(LOG_FILE, encoding='utf-8'), logging.StreamHandler()]
-)
+config = {}
+MODELS_DIR = ""
+DATA_DIR = ""
+HIST_DIR = ""
+LOG_FILE = ""
 log = logging.info
+
+
+def _bind_paths(cfg):
+    global config, MODELS_DIR, DATA_DIR, HIST_DIR
+    config = cfg
+    MODELS_DIR = cfg["models_path"]
+    DATA_DIR = cfg["data_output_path"]
+    HIST_DIR = os.path.join(DATA_DIR, "Historical", "enhanced")
+    os.makedirs(MODELS_DIR, exist_ok=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -71,6 +66,8 @@ def compute_all_features(df):
     TA-Lib functions are bit-exact with MT5 built-in iRSI, iMACD, iATR, etc.
     No future information used — all indicators use only past data.
     """
+    import talib
+    from scipy import stats as scipy_stats
     df = df.copy()
     o = df['open'].values.astype(np.float64)
     h = df['high'].values.astype(np.float64)
@@ -825,13 +822,7 @@ def load_data(symbol, timeframe):
 # SECTION 6: MAIN PIPELINE
 # ═══════════════════════════════════════════════════════════════
 
-def main():
-    parser = argparse.ArgumentParser(description='FXJEFE Full Pipeline')
-    parser.add_argument('--symbol', type=str, default=None, help='Train single symbol (e.g. EURUSD)')
-    parser.add_argument('--tf', type=str, default=None, help='Train single timeframe (e.g. D1)')
-    parser.add_argument('--mode', type=str, default='binary', choices=['binary', '3class'])
-    parser.add_argument('--max-features', type=int, default=None, help='Force max features (e.g. 90)')
-    args = parser.parse_args()
+def _train_all(args):
 
     log("=" * 70)
     log("FXJEFE FULL PIPELINE -- Feature Engineering + Labels + Training")
@@ -943,7 +934,34 @@ def main():
     log(f"\n  Models: {MODELS_DIR}")
     log(f"  Log: {LOG_FILE}")
     log("=" * 70)
+    return 0
+
+
+def run(project_dir=None, dry_run=True, pipeline_args=None):
+    from stage_support import activate
+
+    ctx = activate("full_pipeline.log", project_dir=project_dir, dry_run=dry_run)
+    _bind_paths(ctx["config"])
+    if pipeline_args is None:
+        pipeline_args = argparse.Namespace(symbol=None, tf=None, mode="binary", max_features=None)
+    if dry_run:
+        log("Paper mode: walk-forward training runs only when historical OHLCV is already on disk, and it does not send orders.")
+    return _train_all(pipeline_args)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='FXJEFE Full Pipeline')
+    parser.add_argument('--project-dir', default=None)
+    parser.add_argument('--live', action='store_true', help='Accepted for compatibility. Live is the default.')
+    parser.add_argument('--paper', action='store_true', help='Paper mode.')
+    parser.add_argument('--dry-run', action='store_true', help='Alias of --paper.')
+    parser.add_argument('--symbol', type=str, default=None, help='Train single symbol (e.g. EURUSD)')
+    parser.add_argument('--tf', type=str, default=None, help='Train single timeframe (e.g. D1)')
+    parser.add_argument('--mode', type=str, default='binary', choices=['binary', '3class'])
+    parser.add_argument('--max-features', type=int, default=None, help='Force max features (e.g. 90)')
+    args = parser.parse_args(argv)
+    return run(project_dir=args.project_dir, dry_run=bool(args.paper or args.dry_run), pipeline_args=args)
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

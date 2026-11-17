@@ -53,11 +53,10 @@ def err(msg: str) -> None:
 
 
 def project_root() -> Path:
-    if sys.platform == "win32":
-        home = Path(os.environ.get("USERPROFILE", str(Path.home())))
-    else:
-        home = Path.home()
-    return home / "Documents" / "FXJEFE_Project"
+    from path_resolver import resolve_project_root
+
+    root, _source = resolve_project_root()
+    return root
 
 
 def load_feature_registry():
@@ -415,12 +414,22 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="FXJEFE production pipeline (full script set)")
     ap.add_argument("--inventory-only", action="store_true")
     ap.add_argument("--skip-server", action="store_true")
-    ap.add_argument("--only", default="", help="Comma-separated script names to run")
-    ap.add_argument("--retry", type=int, default=2)
+    ap.add_argument("--only", default="", help="Accepted for compatibility. Stages always follow run_pipeline.py.")
+    ap.add_argument("--retry", type=int, default=1)
+    ap.add_argument("--project-dir", default=None)
+    ap.add_argument("--live", action="store_true", help="Accepted for compatibility. Live trading is the default.")
+    ap.add_argument("--paper", action="store_true", help="Paper mode. No orders are sent.")
+    ap.add_argument("--dry-run", action="store_true", help="Alias of --paper.")
     args = ap.parse_args()
 
-    root = project_root()
-    root.mkdir(parents=True, exist_ok=True)
+    if args.project_dir:
+        os.environ["FXJEFE_PROJECT_DIR"] = args.project_dir
+    from path_resolver import ProjectRootError, require_project_root
+    try:
+        root = require_project_root(args.project_dir)
+    except ProjectRootError as exc:
+        err(str(exc))
+        return 1
     os.chdir(root)
     log(f"project_root = {root}")
     log("policy = visible processes only; feature list locked via feature_registry")
@@ -432,99 +441,12 @@ def main() -> int:
     if args.inventory_only:
         return 0 if (inv.get("verify") or {}).get("production_ready") else 1
 
-    # 2) feature registry
-    reg = load_feature_registry()
-    log(f"PREDICT={reg.PREDICT_COUNT} TRAIN={reg.TRAIN_COUNT} MIN_CONF={reg.MIN_CONFIDENCE}")
-    # ensure pyc exists in project
-    src_reg = ROOT / "feature_registry.py"
-    if src_reg.is_file():
-        dest = root / "feature_registry.py"
-        dest.write_text(src_reg.read_text(encoding="utf-8"), encoding="utf-8")
-        subprocess.run([sys.executable, "-m", "py_compile", str(dest)], check=False)
-        ok(f"compiled feature_registry.pyc under {root}")
+    from run_pipeline import run as run_stages
 
-    cfg = ensure_config(root, reg)
+    paper = bool(args.paper or args.dry_run)
+    log("delegating stage order to run_pipeline.py dry_run=%s" % paper)
+    return run_stages(project_dir=str(root), dry_run=paper, retry=args.retry)
 
-    # 3) path validation if present
-    pv = root / "path_validate.py"
-    if pv.is_file():
-        log("--- path_validate ---")
-        subprocess.run([sys.executable, "-u", str(pv), "--print-map"], cwd=str(root))
-
-    only = {x.strip() for x in args.only.split(",") if x.strip()}
-    steps = PIPELINE
-    if only:
-        steps = [s for s in PIPELINE if s[0] in only]
-
-    step_results: List[Dict[str, Any]] = []
-    run_dir = root / "runs" / f"prod_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    for name, required, timeout in steps:
-        script = root / name
-        if not script.is_file():
-            # try bridge/
-            alt = root / "bridge" / name
-            script = alt if alt.is_file() else script
-        if not script.is_file():
-            msg = f"script not found: {name}"
-            warn(msg)
-            step_results.append({"script": name, "ok": False, "error": msg, "required": required})
-            if required:
-                err(f"required missing — abort")
-                break
-            continue
-
-        success = False
-        last = None
-        for attempt in range(1, args.retry + 1):
-            last = run_visible(script, cfg, timeout)
-            last["required"] = required
-            last["attempt"] = attempt
-            if last.get("ok"):
-                success = True
-                break
-            warn(f"retry {name} {attempt}/{args.retry}")
-            time.sleep(2)
-        step_results.append(last or {"script": name, "ok": False})
-        # post-step validation
-        pvres = post_step_validate(name, cfg, reg)
-        (run_dir / f"post_{name}.json").write_text(json.dumps(pvres, indent=2), encoding="utf-8")
-        log(f"post-validate {name}: {pvres.get('checks')}")
-        if not success and required:
-            err(f"required step failed: {name}")
-            break
-
-    # 4) model discover + feature match test
-    log("--- model discover + feature-match gate ---")
-    model_report = discover_and_test_models(cfg, reg)
-    (run_dir / "models_gate.json").write_text(json.dumps(model_report, indent=2), encoding="utf-8")
-
-    # 5) final validation
-    log("--- final pipeline validation ---")
-    final = final_validation(cfg, reg, step_results, model_report)
-    (run_dir / "FINAL_VALIDATION.json").write_text(json.dumps(final, indent=2, default=str), encoding="utf-8")
-    (root / "state" / "last_production_run.json").write_text(
-        json.dumps({"run_dir": str(run_dir), "final": final, "steps": step_results}, indent=2, default=str),
-        encoding="utf-8",
-    )
-
-    if final["ok"]:
-        ok("PRODUCTION PIPELINE PASSED")
-        a = reg.get_active() if hasattr(reg, "get_active") else {}
-        ok(f"registry version={getattr(reg, 'ACTIVE_VERSION', a.get('version'))}")
-        ok(f"predict={getattr(reg, 'PREDICT_COUNT', a.get('predict_count'))} train={getattr(reg, 'TRAIN_COUNT', a.get('train_count'))}")
-        ok(f"min_confidence gate = {getattr(reg, 'MIN_CONFIDENCE', a.get('min_confidence', 0.77))}")
-        ok("DO NOT REPLACE CURRENT SCRIPTS — inventory only fills missing")
-        strap = root / "secure_strap.py"
-        if strap.is_file():
-            ok("FIRST SUCCESS — secure the project:")
-            ok(f"  python {strap}")
-            ok("Strap freezes registry pyc + seal; never overwrites your scripts.")
-        return 0
-    err(f"PRODUCTION PIPELINE FAILED: {final.get('issues')} failed_steps={final.get('failed_steps')}")
-    err("Optional steps may fail without silencing required core — check runs/*/post_*.json")
-    return 1
 
 
 if __name__ == "__main__":

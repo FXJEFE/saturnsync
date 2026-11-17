@@ -31,14 +31,10 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def project_root() -> Path:
-    env = os.environ.get("FXJEFE_PROJECT_ROOT")
-    if env:
-        return Path(env).expanduser().resolve()
-    if sys.platform == "win32":
-        home = Path(os.environ.get("USERPROFILE", str(Path.home())))
-    else:
-        home = Path.home()
-    return (home / "Documents" / "FXJEFE_Project").resolve()
+    from path_resolver import resolve_project_root
+
+    root, _source = resolve_project_root()
+    return root
 
 
 def find_config() -> Path:

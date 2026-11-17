@@ -23,14 +23,10 @@ def log(m: str) -> None:
 
 
 def project_root() -> Path:
-    env = os.environ.get("FXJEFE_PROJECT_ROOT")
-    if env:
-        return Path(env)
-    if sys.platform == "win32":
-        home = Path(os.environ.get("USERPROFILE", str(Path.home())))
-    else:
-        home = Path.home()
-    return home / "Documents" / "FXJEFE_Project"
+    from path_resolver import resolve_project_root
+
+    root, _source = resolve_project_root()
+    return root
 
 
 def load_dotenv(root: Path) -> Dict[str, str]:
@@ -206,9 +202,17 @@ def verify_registry(root: Path) -> Dict[str, Any]:
     }
 
 
+def run(project_dir=None, dry_run=True) -> int:
+    from path_resolver import require_project_root
+
+    os.environ["FXJEFE_PROJECT_DIR"] = str(require_project_root(project_dir))
+    return main()
+
+
 def main() -> int:
-    root = project_root()
-    root.mkdir(parents=True, exist_ok=True)
+    from path_resolver import require_project_root
+
+    root = require_project_root()
     (root / "state").mkdir(parents=True, exist_ok=True)
     (root / "production").mkdir(parents=True, exist_ok=True)
 

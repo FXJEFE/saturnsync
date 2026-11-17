@@ -5,30 +5,13 @@ buy/hold/sell signals per symbol, and writes signals_output.csv.
 Supports --daemon for continuous operation; default is single-shot for pipeline use.
 """
 import os
-import sys
-import json
 import logging
 import time
 import pandas as pd
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-os.makedirs(config['log_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'signal_processor.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-
-INPUT_PATH  = os.path.join(config['data_path'],        'FXJEFE_Features.csv')
-OUTPUT_PATH = os.path.join(config['data_output_path'], 'signals_output.csv')
+config = {}
+INPUT_PATH = ""
+OUTPUT_PATH = ""
 
 
 def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
@@ -64,23 +47,31 @@ def process_once() -> bool:
     return True
 
 
-def main():
-    logging.info("signal_processor started.")
-    if '--daemon' in sys.argv:
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config, INPUT_PATH, OUTPUT_PATH
+    ctx = activate("signal_processor.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    INPUT_PATH = os.path.join(config['data_path'], 'FXJEFE_Features.csv')
+    OUTPUT_PATH = os.path.join(config['data_output_path'], 'signals_output.csv')
+    import sys
+    if not dry_run and '--daemon' in sys.argv:
+        logging.info("signal_processor daemon started")
         while True:
             try:
                 process_once()
-            except Exception as e:
-                logging.error(f"Error: {e}")
+            except Exception as exc:
+                logging.error("Error: %s", exc)
             time.sleep(60)
-    else:
-        try:
-            ok = process_once()
-            sys.exit(0 if ok else 1)
-        except Exception as e:
-            logging.error(f"Error: {e}")
-            sys.exit(1)
+    try:
+        return 0 if process_once() else 1
+    except Exception as exc:
+        logging.error("Error: %s", exc)
+        return 1
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

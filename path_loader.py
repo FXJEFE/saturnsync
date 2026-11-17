@@ -25,7 +25,11 @@ def _home() -> Path:
 
 
 def default_project_root() -> Path:
-    return _home() / "Documents" / "FXJEFE_Project"
+    """Same PROJECT_ROOT as path_resolver (FXJEFE_PROJECT_DIR, then Documents)."""
+    from path_resolver import resolve_project_root
+
+    root, _source = resolve_project_root()
+    return root
 
 
 def _defaults(root: Path) -> Dict[str, str]:

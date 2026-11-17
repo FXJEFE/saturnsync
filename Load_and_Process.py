@@ -5,45 +5,28 @@ reports basic statistics, and exits.  Run standalone or via pipeline for a
 quick data-quality check before training.
 """
 import os
-import json
 import logging
 import pandas as pd
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-os.makedirs(config['log_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'Load_and_Process.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-
-# All 27 model features plus metadata columns
-EXPECTED_COLUMNS = ['time', 'symbol', 'price'] + [
-    c for c in config['features'] if c != 'price'
-] + ['signal']
+config = {}
 
 
 def main():
+    expected_columns = ['time', 'symbol', 'price'] + [
+        c for c in config['features'] if c != 'price'
+    ] + ['signal']
     input_path = os.path.join(config['data_path'], 'FXJEFE_Features.csv')
 
     if not os.path.exists(input_path):
         logging.error(f"Input file not found: {input_path}")
         logging.error("Run mt5_data_sync.py (or GenerateFeatures.mq5) first.")
-        raise FileNotFoundError(input_path)
+        return 1
 
     df = pd.read_csv(input_path, encoding='utf-8-sig', low_memory=False)
     logging.info(f"Loaded {len(df)} rows, {len(df.columns)} columns.")
     logging.info(f"Columns present: {list(df.columns)}")
 
-    missing = [c for c in EXPECTED_COLUMNS if c not in df.columns]
+    missing = [c for c in expected_columns if c not in df.columns]
     if missing:
         logging.warning(f"Missing expected columns: {missing}")
     else:
@@ -66,7 +49,19 @@ def main():
         logging.info(f"Symbols: {df['symbol'].unique().tolist()}")
 
     logging.info("Load_and_Process completed successfully.")
+    return 0
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config
+    ctx = activate("Load_and_Process.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    return main()
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

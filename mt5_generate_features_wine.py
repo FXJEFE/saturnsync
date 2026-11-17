@@ -44,7 +44,12 @@ MT5_COMMON_FILES = config['mt5_common_path']
 
 # MQL5 script path (in Wine MT5)
 MQL5_SCRIPT = "GenerateFeatures.ex5"
-MQL5_SCRIPT_PATH_WINE = f"C:\\Users\\LarryLocal\\AppData\\Roaming\\MetaQuotes\\Terminal\\{MT5_TERMINAL_ID}\\MQL5\\Scripts\\{MQL5_SCRIPT}"
+def _mql5_dir():
+    from fxjefe_paths import mql5_dir
+    return mql5_dir()
+
+
+MQL5_SCRIPT_PATH_WINE = os.path.join(str(_mql5_dir()), "Scripts", MQL5_SCRIPT)
 
 # Output paths
 OUTPUT_CSV = os.path.join(config['data_path'], 'FXJEFE_Features.csv')
@@ -79,7 +84,7 @@ def check_mt5_terminal():
 def sync_mql5_script():
     """Copy GenerateFeatures.ex5 to MT5 Scripts folder in Wine."""
     source = os.path.join(config['mt5_experts_path'], 'GenerateFeatures.ex5')
-    target_dir = f"{WINE_PREFIX}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/{MT5_TERMINAL_ID}/MQL5/Scripts"
+    target_dir = os.path.join(str(_mql5_dir()), "Scripts")
     target = os.path.join(target_dir, MQL5_SCRIPT)
     
     os.makedirs(target_dir, exist_ok=True)
@@ -111,7 +116,7 @@ def run_mql5_script():
         cmd = [
             'wine',
             MT5_EXE,
-            '/config:' + f"{WINE_PREFIX}/drive_c/users/LarryLocal/AppData/Roaming/MetaQuotes/Terminal/{MT5_TERMINAL_ID}",
+            '/config:' + str(_mql5_dir()),
         ]
         logging.info(f"Starting MT5: {' '.join(cmd)}")
         # subprocess.Popen(cmd)  # Uncomment to auto-start MT5
