@@ -417,7 +417,9 @@ def main() -> int:
     ap.add_argument("--only", default="", help="Accepted for compatibility. Stages always follow run_pipeline.py.")
     ap.add_argument("--retry", type=int, default=1)
     ap.add_argument("--project-dir", default=None)
-    ap.add_argument("--live", action="store_true")
+    ap.add_argument("--live", action="store_true", help="Accepted for compatibility. Live trading is the default.")
+    ap.add_argument("--paper", action="store_true", help="Paper mode. No orders are sent.")
+    ap.add_argument("--dry-run", action="store_true", help="Alias of --paper.")
     args = ap.parse_args()
 
     if args.project_dir:
@@ -441,8 +443,9 @@ def main() -> int:
 
     from run_pipeline import run as run_stages
 
-    log("delegating stage order to run_pipeline.py dry_run=%s" % (not args.live))
-    return run_stages(project_dir=str(root), dry_run=not args.live, retry=args.retry)
+    paper = bool(args.paper or args.dry_run)
+    log("delegating stage order to run_pipeline.py dry_run=%s" % paper)
+    return run_stages(project_dir=str(root), dry_run=paper, retry=args.retry)
 
 
 

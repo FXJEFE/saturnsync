@@ -12,6 +12,6 @@ if not exist "%FXJEFE_PROJECT_DIR%\fxjefe\Scripts\python.exe" (
     exit /b 1
 )
 cd /d "%FXJEFE_PROJECT_DIR%"
-REM Paper mode is the default. Pass --live only after the FTMO gate may send a real order.
+REM Live trading is the default. Pass --paper or --dry-run for a test run.
 "%FXJEFE_PROJECT_DIR%\fxjefe\Scripts\python.exe" "%FXJEFE_PROJECT_DIR%\run_pipeline.py" --project-dir "%FXJEFE_PROJECT_DIR%" %*
 exit /b %ERRORLEVEL%

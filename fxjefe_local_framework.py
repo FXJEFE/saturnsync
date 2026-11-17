@@ -79,7 +79,7 @@ def main():
 
     elif args.command == 'pipeline':
         runner = project_root / 'run_pipeline.py'
-        print("Running full pipeline in paper mode...")
+        print("Running full pipeline in LIVE mode...")
         run_command([sys.executable, str(runner)])
 
 

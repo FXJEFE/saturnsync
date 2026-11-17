@@ -952,13 +952,15 @@ def run(project_dir=None, dry_run=True, pipeline_args=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='FXJEFE Full Pipeline')
     parser.add_argument('--project-dir', default=None)
-    parser.add_argument('--live', action='store_true')
+    parser.add_argument('--live', action='store_true', help='Accepted for compatibility. Live is the default.')
+    parser.add_argument('--paper', action='store_true', help='Paper mode.')
+    parser.add_argument('--dry-run', action='store_true', help='Alias of --paper.')
     parser.add_argument('--symbol', type=str, default=None, help='Train single symbol (e.g. EURUSD)')
     parser.add_argument('--tf', type=str, default=None, help='Train single timeframe (e.g. D1)')
     parser.add_argument('--mode', type=str, default='binary', choices=['binary', '3class'])
     parser.add_argument('--max-features', type=int, default=None, help='Force max features (e.g. 90)')
     args = parser.parse_args(argv)
-    return run(project_dir=args.project_dir, dry_run=not args.live, pipeline_args=args)
+    return run(project_dir=args.project_dir, dry_run=bool(args.paper or args.dry_run), pipeline_args=args)
 
 
 if __name__ == '__main__':

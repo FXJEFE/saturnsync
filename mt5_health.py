@@ -26,7 +26,8 @@ def run(project_dir=None, dry_run=True):
         elif dry_run:
             logging.info("Paper mode: health check is using the in-process terminal, not a live login")
         else:
-            logging.info("No MT5_ACCOUNT/MT5_PASSWORD/MT5_SERVER set; using the terminal's existing session")
+            logging.error("MT5 credentials are missing. Set MT5_ACCOUNT, MT5_PASSWORD, and MT5_SERVER.")
+            return 1
         info = terminal.account_info()
         if info is None:
             logging.error("MT5 account_info returned nothing")

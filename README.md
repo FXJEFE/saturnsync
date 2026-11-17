@@ -4,7 +4,7 @@ Production ML + MetaTrader 5 trading runtime.
 
 **Policy:** UTF-8 only · all features permitted · no filtering / labeling / blocking of feature names · signals only when model is loaded and featureset matches EA + server + Predict.mq5 + GenerateFeatures.mq5.
 
-The pipeline entry point in this repo is `run_pipeline.py`. It starts every stage in dependency order and stays in paper mode unless you pass `--live`.
+The pipeline entry point in this repo is `run_pipeline.py`. It starts every stage in dependency order. **Live trading is the default.** `run_pipeline.bat` places real orders without `--live`. Use `--paper` (or `--dry-run`) for a test run. `--live` is accepted and does not change the default.
 
 ---
 
@@ -34,7 +34,7 @@ run_pipeline.bat
 
 `setup_windows.bat` calls `setup_windows.ps1`. It installs Python 3.11.9 and Python 3.8.10 (64-bit, per-user) when those launchers are missing, then creates `<PROJECT_ROOT>\fxjefe` (3.11, `requirements.txt`) and `<PROJECT_ROOT>\fxjefe38` (3.8.10, `requirements-fxjefe38.txt`, plus the TA-Lib 0.4.28 cp38 Windows wheel).
 
-`run_pipeline.bat` runs `run_pipeline.py` with the `fxjefe` interpreter in paper mode. Feature engineering, `full_pipeline.py`, and the LSTM stage use `fxjefe38` when that venv exists. Add `--live` only when `configftmo.json` is in place and an order may be sent after the risk gate.
+`run_pipeline.bat` runs `run_pipeline.py` with the `fxjefe` interpreter in **LIVE MODE**. Feature engineering, `full_pipeline.py`, and the LSTM stage use `fxjefe38` when that venv exists. Startup prints `LIVE MODE` and refuses to start unless `configftmo.json` is in `PROJECT_ROOT` and `MT5_ACCOUNT`, `MT5_PASSWORD`, and `MT5_SERVER` are set. The FTMO gate (6.66% drawdown stop on new entries, 11.1% profit target stop, no auto-close), the margin guard (level at least 300, free margin never negative), the feature-hash match, and the MT5 health check still have to pass before an order. For a test run: `run_pipeline.bat --paper`.
 
 Override the root before either command:
 
@@ -48,7 +48,7 @@ Broker login is read from `MT5_ACCOUNT`, `MT5_PASSWORD`, and `MT5_SERVER`. None 
 
 ## FTMO rules
 
-The primary rules file is `PROJECT_ROOT\configftmo.json`. `configftmo.example.json` is checked in with the demo-200k rules: max drawdown 6.66 percent (new entries stop, open positions stay open), per-trade risk 33.3 percent, profit target 11.1 percent, max position size 1.0, max leverage 100, and a margin-level floor of 300. Older `ftmo_config` / `FTMOConfig` filenames and `_pct` aliases still load. `FXJEFE_MQL5_DIR` overrides `mt5_mql5_dir`. The risk gate runs before `process_trades.py`. Paper mode never calls `order_send`.
+The primary rules file is `PROJECT_ROOT\configftmo.json`. `configftmo.example.json` is checked in with the demo-200k rules: max drawdown 6.66 percent (new entries stop, open positions stay open), per-trade risk 33.3 percent, profit target 11.1 percent, max position size 1.0, max leverage 100, and a margin-level floor of 300. Older `ftmo_config` / `FTMOConfig` filenames and `_pct` aliases still load. `FXJEFE_MQL5_DIR` overrides `mt5_mql5_dir`. The risk gate runs before `process_trades.py`. `--paper` never calls `order_send`. Live mode calls it only after the gate passes.
 
 Verify with `fxjefe\Scripts\python.exe run_pipeline.py --verify`. If `checksums.json` is missing, `python verify_checksums.py --write` creates it and says so when it is absent.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 
 
-def run(project_dir=None, dry_run=True, retry=1):
+def run(project_dir=None, dry_run=False, retry=1):
     from run_pipeline import run as run_pipeline
 
     return run_pipeline(project_dir=project_dir, dry_run=dry_run, retry=retry)

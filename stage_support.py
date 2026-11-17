@@ -20,15 +20,12 @@ def parse_stage_args(argv=None, description="FXJEFE pipeline stage"):
     parser.add_argument(
         "--live",
         action="store_true",
-        help="Disable paper mode. Orders are still refused unless the FTMO gate passed.",
+        help="Accepted for compatibility. Live trading is the default.",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Paper mode (this is the default).",
-    )
+    parser.add_argument("--paper", action="store_true", help="Paper mode. No orders are sent.")
+    parser.add_argument("--dry-run", action="store_true", help="Alias of --paper.")
     args, _unknown = parser.parse_known_args(argv)
-    args.dry_run = not args.live
+    args.dry_run = bool(args.paper or args.dry_run)
     return args
 
 

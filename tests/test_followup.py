@@ -129,6 +129,46 @@ class ChecksumTests(unittest.TestCase):
         self.assertEqual(verify_checksums.verify(root), 0)
 
 
+class LiveDefaultTests(unittest.TestCase):
+    def test_cli_defaults_to_live_and_paper_alias(self):
+        import run_pipeline
+
+        self.assertFalse(run_pipeline.dry_run_from_args(run_pipeline.parse_cli([])))
+        self.assertFalse(run_pipeline.dry_run_from_args(run_pipeline.parse_cli(["--live"])))
+        self.assertTrue(run_pipeline.dry_run_from_args(run_pipeline.parse_cli(["--paper"])))
+        self.assertTrue(run_pipeline.dry_run_from_args(run_pipeline.parse_cli(["--dry-run"])))
+        self.assertTrue(run_pipeline.dry_run_from_args(run_pipeline.parse_cli(["--live", "--paper"])))
+
+    def test_live_fails_closed_without_rules_or_credentials(self):
+        import os
+        import run_pipeline
+        from mt5_client import paper_terminal
+
+        paper_terminal().order_send_calls = 0
+        root = Path(tempfile.mkdtemp(prefix="fxjefe-live-"))
+        (root / "config.json").write_text((ROOT / "config.json").read_text(encoding="utf-8"), encoding="utf-8")
+        saved = {key: os.environ.pop(key, None) for key in ("MT5_ACCOUNT", "MT5_PASSWORD", "MT5_SERVER")}
+        try:
+            code = run_pipeline.run(project_dir=str(root), dry_run=False, retry=1)
+            self.assertEqual(code, 1)
+            self.assertEqual(paper_terminal().order_send_calls, 0)
+            log_text = (root / "Logs" / "pipeline.log").read_text(encoding="utf-8", errors="replace")
+            self.assertIn("LIVE MODE", log_text)
+            self.assertIn("configftmo.json is missing", log_text)
+            (root / "configftmo.json").write_text((ROOT / "configftmo.json").read_text(encoding="utf-8"), encoding="utf-8")
+            code = run_pipeline.run(project_dir=str(root), dry_run=False, retry=1)
+            self.assertEqual(code, 1)
+            log_text = (root / "Logs" / "pipeline.log").read_text(encoding="utf-8", errors="replace")
+            self.assertIn("MT5 credentials are missing", log_text)
+            self.assertEqual(paper_terminal().order_send_calls, 0)
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
 class StrategyTests(unittest.TestCase):
     def test_sentiment_neutral_does_not_block_paper_cycle(self):
         import os

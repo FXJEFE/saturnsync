@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Start every FXJEFE MT5 pipeline stage in dependency order.
 
-Default mode is dry-run / paper: no live order is sent. ``--live`` is required
-before any stage is allowed to call the broker. A failed stage or an FTMO
-breach stops the pipeline.
+Default mode is LIVE: real orders are sent after the mandatory gates.
+``--paper`` and ``--dry-run`` select a test run. ``--live`` is accepted and
+does not change that default. A missing configftmo.json, missing MT5
+credentials, a failed stage, or an FTMO breach stops the pipeline.
 
 Stage order
 ===========
@@ -241,7 +242,46 @@ def run_strategy_cycle(root, cfg, dry_run):
     return 0
 
 
-def run_verification(project_dir=None, dry_run=True):
+def dry_run_from_args(args):
+    """Live is the default. ``--paper`` and ``--dry-run`` select paper mode.
+
+    ``--live`` is accepted for compatibility and does not switch the mode.
+    """
+    return bool(getattr(args, "paper", False) or getattr(args, "dry_run", False))
+
+
+def print_mode_banner(dry_run):
+    line = "=" * 60
+    print(line)
+    if dry_run:
+        print("PAPER MODE")
+        print("No orders will be sent.")
+        logging.info("PAPER MODE")
+    else:
+        print("LIVE MODE")
+        print("Real orders will be sent only after the FTMO gate, margin guard,")
+        print("feature-hash match, and MT5 health check pass.")
+        logging.info("LIVE MODE")
+    print(line)
+
+
+def live_prerequisite_errors(root):
+    """Fail closed before any live order. Does not print secrets."""
+    errors = []
+    rules = os.path.join(str(root), "configftmo.json")
+    if not os.path.isfile(rules):
+        errors.append("configftmo.json is missing: %s" % rules)
+    account = (os.environ.get("MT5_ACCOUNT") or "").strip()
+    password = os.environ.get("MT5_PASSWORD") or ""
+    server = (os.environ.get("MT5_SERVER") or "").strip()
+    if not account or not password or not server:
+        errors.append(
+            "MT5 credentials are missing. Set MT5_ACCOUNT, MT5_PASSWORD, and MT5_SERVER."
+        )
+    return errors
+
+
+def run_verification(project_dir=None, dry_run=False):
     """runtime_lock, feature_hash, signal_gate, verify_checksums, then golden /health."""
     root = require_project_root(project_dir)
     os.environ[ENV_VAR] = str(root)
@@ -301,15 +341,24 @@ def _golden_health(root, dry_run):
             proc.kill()
 
 
-def run(project_dir=None, dry_run=True, retry=1):
+def run(project_dir=None, dry_run=False, retry=1):
     root = require_project_root(project_dir)
     os.environ[ENV_VAR] = str(root)
     os.environ["FXJEFE_DRY_RUN"] = "1" if dry_run else "0"
     cfg = load_config(root)
     log_path = configure_logging(cfg["log_path"])
+    print_mode_banner(dry_run)
     logging.info("PROJECT_ROOT=%s", root)
     logging.info("config=%s", cfg["config_path"])
     logging.info("dry_run=%s log=%s", dry_run, log_path)
+    if not dry_run:
+        blocked = live_prerequisite_errors(root)
+        for message in blocked:
+            logging.error(message)
+            print(message)
+        if blocked:
+            logging.error("LIVE MODE refused to start. No orders were sent.")
+            return 1
     logging.info("stage_count=%s", len(PIPELINE_STAGES))
     total = len(PIPELINE_STAGES)
     for index, (group, module_name, _fn) in enumerate(PIPELINE_STAGES, start=1):
@@ -352,21 +401,26 @@ def run(project_dir=None, dry_run=True, retry=1):
     return 0
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="FXJEFE MT5 pipeline (paper by default)")
+def parse_cli(argv=None):
+    parser = argparse.ArgumentParser(description="FXJEFE MT5 pipeline (live by default)")
     parser.add_argument("--project-dir", default=None, help="PROJECT_ROOT. Overrides %s." % ENV_VAR)
     parser.add_argument("--config", default=None, help="Accepted for compatibility; config.json is read from PROJECT_ROOT.")
     parser.add_argument("--retry", type=int, default=1)
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--live", action="store_true", help="Allow live broker actions after the FTMO gate.")
-    parser.add_argument("--dry-run", action="store_true", help="Paper mode (default).")
+    parser.add_argument("--live", action="store_true", help="Accepted for compatibility. Live trading is already the default.")
+    parser.add_argument("--paper", action="store_true", help="Paper mode. No orders are sent.")
+    parser.add_argument("--dry-run", action="store_true", help="Alias of --paper.")
     parser.add_argument("--skip-server", action="store_true", help="Accepted for compatibility. The AI server is not started.")
-    parser.add_argument("--skip-mt5", action="store_true", help="Accepted for compatibility. Health still runs in paper mode.")
+    parser.add_argument("--skip-mt5", action="store_true", help="Accepted for compatibility. MT5 health still runs.")
     parser.add_argument("--verify", action="store_true", help="Run runtime_lock, feature_hash, signal_gate, verify_checksums, and golden /health.")
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_cli(argv)
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-    dry_run = not args.live
+    dry_run = dry_run_from_args(args)
     try:
         if args.verify:
             return run_verification(project_dir=args.project_dir, dry_run=dry_run)
