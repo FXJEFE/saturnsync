@@ -3,34 +3,20 @@ check_model_features.py
 Loads my_model.pkl and verifies the number of features matches config.
 """
 import os
-import json
 import logging
-import joblib
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-os.makedirs(config['log_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'check_model_features.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+config = {}
 
 
 def main():
+    import joblib
+
     model_path = os.path.join(config['models_path'], 'my_model.pkl')
 
     if not os.path.exists(model_path):
         logging.error(f"Model not found: {model_path}")
         logging.error("Run train_models.py first.")
-        raise FileNotFoundError(model_path)
+        return 1
 
     model = joblib.load(model_path)
     n_model    = model.n_features_in_
@@ -42,11 +28,25 @@ def main():
     logging.info(f"Feature count check : {status}")
 
     if status != "OK":
-        raise ValueError(
-            f"Feature count mismatch — model expects {n_model}, config has {n_config}. "
-            "Retrain the model with the current config['features']."
+        logging.error(
+            "Feature count mismatch — model expects %s, config has %s.",
+            n_model,
+            n_config,
         )
+        return 1
+    return 0
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config
+    ctx = activate("check_model_features.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    return main()
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

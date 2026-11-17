@@ -1,66 +1,40 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""Load FXJEFE_trades.csv into a SQLite file under the project data directory."""
+from __future__ import annotations
+
 import logging
-
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
 import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
-import json
-import logging
 import sqlite3
-import pandas as pd
-import os
+import sys
 
-# Load configuration
-with open('config.json', 'r') as f:
-    config = json.load(f)
 
-# Set up logging
-logging.basicConfig(filename=os.path.join(config['log_path'], 'pipeline.log'), level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
 
-def update_database():
-    """Update SQLite database with trade data."""
-    csv_path = os.path.join(config['data_output_path'], 'FXJEFE_trades.csv')
-    db_path = os.path.join(config['data_output_path'], 'fxjefe_trades.db')
-    
-    if not os.path.exists(csv_path):
-        logging.error(f"Trades file not found: {csv_path}")
-        return
-    
-    df = pd.read_csv(csv_path)
-    conn = sqlite3.connect(db_path)
-    df.to_sql('trades', conn, if_exists='replace', index=False)
-    conn.close()
-    logging.info(f"Updated database at {db_path} with trade data")
+    ctx = activate("update_database.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    csv_path = os.path.join(config["data_output_path"], "FXJEFE_trades.csv")
+    db_path = os.path.join(config["data_output_path"], "fxjefe_trades.db")
+    if not os.path.isfile(csv_path):
+        logging.info("No trades file to load: %s", csv_path)
+        return 0
+    import pandas as pd
+
+    frame = pd.read_csv(csv_path)
+    connection = sqlite3.connect(db_path)
+    try:
+        frame.to_sql("trades", connection, if_exists="replace", index=False)
+    finally:
+        connection.close()
+    logging.info("Updated %s", db_path)
+    return 0
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
 
 if __name__ == "__main__":
-    update_database()
+    sys.exit(main())

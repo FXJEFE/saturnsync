@@ -9,32 +9,13 @@ using the MetaTrader5 Python API instead of running inside the terminal.
 Output: data/FXJEFE_Features.csv  (also copied to Common/Files for the EA)
 """
 import os
-import sys
-import json
 import logging
 import shutil
 import numpy as np
 import pandas as pd
-import MetaTrader5 as mt5
-from datetime import datetime
-from textblob import TextBlob
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-os.makedirs(config['log_path'], exist_ok=True)
-os.makedirs(config['data_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'mt5_generate_features.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+config = {}
+mt5 = None
 
 # Trading pairs — FTMO uses plain names (no .r suffix)
 SYMBOLS = ['EURUSD', 'USDJPY', 'XAUUSD', 'AUDUSD', 'GBPUSD', 'USDCAD']
@@ -54,6 +35,7 @@ def get_sentiment(symbol: str) -> float:
     base = symbol.replace('.r', '').replace('.R', '')
     text = SENTIMENT_MAP.get(base, "Neutral")
     try:
+        from textblob import TextBlob
         return TextBlob(text).sentiment.polarity
     except Exception:
         return 0.0
@@ -308,16 +290,16 @@ def main():
     logging.info("mt5_generate_features.py started")
 
     if not mt5.initialize():
-        logging.error(f"MT5 initialize failed: {mt5.last_error()}")
-        sys.exit(1)
+        logging.error("MT5 initialize failed: %s", mt5.last_error())
+        return 1
 
     info = mt5.account_info()
     if info:
-        logging.info(f"Connected: account {info.login}, server {info.server}, balance {info.balance}")
+        logging.info("Connected: server %s balance %s", info.server, info.balance)
     else:
         logging.error("Not logged in to MT5.")
         mt5.shutdown()
-        sys.exit(1)
+        return 1
 
     # Build features for all symbols
     all_frames = []
@@ -341,7 +323,7 @@ def main():
 
     if not all_frames:
         logging.error("No data for any symbol. Is market open?")
-        sys.exit(1)
+        return 1
 
     result = pd.concat(all_frames, ignore_index=True)
     logging.info(f"Total: {len(result)} rows across {len(all_frames)} symbols.")
@@ -365,7 +347,21 @@ def main():
             logging.warning(f"{label} copy skipped — file locked by EA (will use existing copy).")
 
     logging.info("mt5_generate_features.py completed.")
+    return 0
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+    from mt5_client import get_mt5
+
+    global config, mt5
+    ctx = activate("mt5_generate_features.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    mt5 = get_mt5(dry_run=dry_run)
+    return main()
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

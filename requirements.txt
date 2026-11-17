@@ -1,0 +1,18 @@
+# Pinned for CPython 3.8.10, 64-bit Windows.
+# MetaTrader5 5.0.6231 publishes a cp38 win_amd64 wheel and requires Python >=3.6,<4.
+# TA-Lib is not listed: current releases are source-only and do not pip-install
+# on a clean Windows machine. full_pipeline.py imports it only when training
+# from raw OHLCV.
+numpy==1.24.4
+pandas==2.0.3
+scipy==1.10.1
+scikit-learn==1.3.2
+joblib==1.4.2
+xgboost==2.1.4
+lightgbm==4.6.0
+optuna==4.5.0
+requests==2.32.4
+chardet==5.2.0
+textblob==0.18.0.post0
+filelock==3.16.1
+MetaTrader5==5.0.6231

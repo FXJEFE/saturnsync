@@ -1,39 +1,36 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""Print the label distribution in training_data.csv."""
+from __future__ import annotations
+
 import logging
-
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
 import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
-import pandas as pd
-data = pd.read_csv('training_data_updated.csv')
-print("Current label counts:")
-print(data['label'].value_counts())
+import sys
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    ctx = activate("check_labels.log", project_dir=project_dir, dry_run=dry_run)
+    path = os.path.join(ctx["config"]["data_output_path"], "training_data.csv")
+    if not os.path.isfile(path):
+        logging.error("training_data.csv not found: %s", path)
+        return 1
+    import pandas as pd
+
+    frame = pd.read_csv(path)
+    if "label" not in frame.columns:
+        logging.error("training_data.csv has no label column")
+        return 1
+    counts = frame["label"].value_counts().to_dict()
+    logging.info("Label counts: %s", counts)
+    return 0
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

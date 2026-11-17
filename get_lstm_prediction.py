@@ -1,62 +1,57 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""LSTM scoring hook.
+
+The previous script referenced ``lstm_model``, ``models_loaded``, and
+``feature_history`` without defining them, and it exited while importing.
+There is still no LSTM artifact in this repo. Paper mode records that and
+continues. Live mode fails instead of inventing a network.
+"""
+from __future__ import annotations
+
 import logging
-
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
 import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
-def get_lstm_prediction(symbol, features_array):
-    """Get prediction from LSTM model using sequence data"""
-    if not models_loaded or lstm_model is None:
+import sys
+
+
+def get_lstm_prediction(symbol, features_array, model=None, history=None, sequence_length=20):
+    """Score one vector when the caller supplies a loaded model. Otherwise return no signal."""
+    if model is None or history is None:
         return None, 0.0
-    
-    # Initialize history for this symbol if it doesn't exist
-    if symbol not in feature_history:
-        feature_history[symbol] = deque(maxlen=SEQUENCE_LENGTH)
-    
-    # Add current features to history
-    feature_history[symbol].append(features_array)
-    
-    # If not enough history, return None
-    if len(feature_history[symbol]) < SEQUENCE_LENGTH:
+    bucket = history.setdefault(symbol, [])
+    bucket.append(list(features_array))
+    del bucket[:-sequence_length]
+    if len(bucket) < sequence_length:
         return None, 0.0
-    
-    # Prepare sequence for LSTM
-    sequence = np.array(list(feature_history[symbol]))
-    sequence = sequence.reshape(1, SEQUENCE_LENGTH, len(FEATURES))
-    
-    # Predict
-    lstm_pred = lstm_model.predict(sequence, verbose=0)[0]
-    
-    # Map prediction to signal
-    signal_map = {0: "neutral", 1: "buy", 2: "sell"}
-    lstm_class = np.argmax(lstm_pred)
-    return signal_map[lstm_class], float(lstm_pred[lstm_class])
+    import numpy as np
+
+    sequence = np.asarray(bucket, dtype="float32").reshape(1, sequence_length, len(features_array))
+    prediction = model.predict(sequence, verbose=0)[0]
+    labels = {0: "neutral", 1: "buy", 2: "sell"}
+    chosen = int(np.argmax(prediction))
+    return labels.get(chosen, "neutral"), float(prediction[chosen])
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    ctx = activate("get_lstm_prediction.log", project_dir=project_dir, dry_run=dry_run)
+    model_path = os.path.join(ctx["config"]["models_path"], "lstm_model.h5")
+    if not os.path.isfile(model_path):
+        message = "No LSTM model at %s. This repo does not ship one." % model_path
+        if dry_run:
+            logging.warning("%s Paper mode skips LSTM scoring.", message)
+            return 0
+        logging.error(message)
+        return 1
+    logging.error("LSTM file %s is present but no loader is configured in this repo", model_path)
+    return 1
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

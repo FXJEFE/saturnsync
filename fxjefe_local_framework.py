@@ -10,13 +10,9 @@ import sys
 import subprocess
 from pathlib import Path
 
-# Project root = folder containing this script
+# Script directory is the checkout. PROJECT_ROOT is resolved when a command runs.
 project_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(project_root))
-
-from path_resolver import get_paths
-
-paths = get_paths()
 
 
 def run_command(cmd_list, cwd=None):
@@ -61,11 +57,15 @@ def main():
     sub.add_parser('pipeline', help='Run full pipeline')
 
     args = parser.parse_args()
+    from path_resolver import get_paths
+
+    paths = get_paths()
 
     if args.command == 'start-server':
-        server_script = paths.scripts_path / 'fxjefe_xgboost_server.py'
-        print(f"Starting AI server: {server_script}")
-        subprocess.Popen(['python', str(server_script)], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        server_script = paths.scripts_path / 'ai_server.py'
+        print("Starting AI server: %s" % server_script)
+        flags = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
+        subprocess.Popen([sys.executable, str(server_script)], creationflags=flags)
 
     elif args.command == 'test-models':
         tester = project_root / 'test_local_trading_models.py'
@@ -78,9 +78,9 @@ def main():
         run_command(['python', str(shap_script), '--rows', str(args.rows)])
 
     elif args.command == 'pipeline':
-        runner = project_root / 'run_fxjeje_pipeline.py'
-        print("Running full pipeline...")
-        run_command(['python', str(runner)])
+        runner = project_root / 'run_pipeline.py'
+        print("Running full pipeline in paper mode...")
+        run_command([sys.executable, str(runner)])
 
 
 if __name__ == '__main__':

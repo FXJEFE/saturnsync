@@ -12,9 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-ROOT = Path.home() / "Documents" / "FXJEFE_Project"
-if not ROOT.is_dir():
-    ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent
 
 REQUIRED_KEYS = {
     "feature_policy": str,
@@ -125,7 +123,16 @@ def check_paths(data: Dict[str, Any], root: Path) -> Tuple[List[str], List[str]]
     return errs, warns
 
 
-def main() -> int:
+def run(project_dir=None, dry_run=True) -> int:
+    global ROOT
+    from path_resolver import require_project_root
+
+    ROOT = require_project_root(project_dir)
+    os.environ["FXJEFE_PROJECT_DIR"] = str(ROOT)
+    return _validate()
+
+
+def _validate() -> int:
     path = config_path()
     print(f"[CONFIG-VALIDATE] path={path}")
     data, load_errs = load(path)
@@ -171,6 +178,12 @@ def main() -> int:
         return 1
     print("[CONFIG-VALIDATE] OK")
     return 0
+
+
+def main(argv=None) -> int:
+    from stage_support import call_main
+
+    return call_main(run, argv)
 
 
 if __name__ == "__main__":

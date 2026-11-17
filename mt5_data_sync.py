@@ -7,38 +7,23 @@ MQL5/Files folder.  This script checks both locations and uses whichever is newe
 import os
 import shutil
 import time
-import json
 import logging
-import sys
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+config = {}
+FILENAME = 'FXJEFE_Features.csv'
+DEST_PATH = ''
+SOURCE_CANDIDATES = []
 
-def load_config():
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        return json.load(f)
 
-config = load_config()
-
-os.makedirs(config['log_path'],  exist_ok=True)
-os.makedirs(config['data_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'mt5_data_sync.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-
-FILENAME  = 'FXJEFE_Features.csv'
-DEST_PATH = os.path.join(config['data_path'], FILENAME)
-
-# MT5 writes to either terminal-specific MQL5\Files or the Common\Files folder
-SOURCE_CANDIDATES = [
-    os.path.join(config.get('mt5_common_path', ''), FILENAME),
-    os.path.join(config.get('mt5_files_path',  ''), FILENAME),
-]
+def _bind(cfg):
+    global config, DEST_PATH, SOURCE_CANDIDATES
+    config = cfg
+    DEST_PATH = os.path.join(config['data_path'], FILENAME)
+    SOURCE_CANDIDATES = []
+    for key in ('mt5_common_path', 'mt5_files_path'):
+        folder = (config.get(key) or '').strip()
+        if folder:
+            SOURCE_CANDIDATES.append(os.path.join(folder, FILENAME))
 
 def best_source():
     candidates = [(p, os.path.getmtime(p)) for p in SOURCE_CANDIDATES if os.path.exists(p)]
@@ -61,19 +46,29 @@ def sync_once():
         logging.debug("No update needed (destination is current).")
     return True
 
-def main():
-    logging.info("mt5_data_sync daemon started.")
-    while True:
-        try:
-            sync_once()
-        except Exception as e:
-            logging.error(f"Sync error: {e}")
-        time.sleep(60)
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    ctx = activate('mt5_data_sync.log', project_dir=project_dir, dry_run=dry_run)
+    _bind(ctx['config'])
+    import sys
+    if not dry_run and '--daemon' in sys.argv:
+        logging.info("mt5_data_sync daemon started.")
+        while True:
+            try:
+                sync_once()
+            except Exception as exc:
+                logging.error("Sync error: %s", exc)
+            time.sleep(60)
+    try:
+        sync_once()
+    except Exception as exc:
+        logging.error("Sync error: %s", exc)
+        return 1
+    return 0
+
 
 if __name__ == '__main__':
-    # --daemon keeps running; default is single-shot for pipeline use
-    if '--daemon' in sys.argv:
-        main()
-    else:
-        ok = sync_once()
-        sys.exit(0)   # pipeline continues even if nothing to sync
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

@@ -1,86 +1,64 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""Score FXJEFE_Features.csv with models/xgboost_model.json when that file exists.
+
+This repo does not ship xgboost_model.json. Paper mode records the skip and
+continues. Live mode fails closed instead of loading a model from the
+working directory or inventing predictions.
+"""
+from __future__ import annotations
+
 import logging
-
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
 import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
-import pandas as pd
-import xgboost as xgb
-import numpy as np
+import sys
 
-# Load the trained XGBoost model
-model = xgb.Booster()
-model.load_model('xgboost_model.json')
 
-# Load the features data and standardize column names
-features = pd.read_csv('FXJEFE_Features.csv')
-features.columns = [col.lower().strip() for col in features.columns]
-print("Standardized columns:", list(features.columns))
-feature_columns = ['price', 'atr', 'ema_diff', 'rsi', 'garch_vol', 'macd_diff']
-missing = [col for col in feature_columns if col not in features.columns]
-if missing:
-    print(f"Missing columns: {missing}")
-    exit(1)
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
 
-# Specify the feature columns that the model was trained on
-X = features[feature_columns]
+    ctx = activate("generate_signals_with_xgboost.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    model_path = os.path.join(config["models_path"], "xgboost_model.json")
+    features_path = os.path.join(config["data_path"], "FXJEFE_Features.csv")
+    if not os.path.isfile(model_path):
+        message = "xgboost_model.json is not in %s" % config["models_path"]
+        if dry_run:
+            logging.warning("%s; paper mode skips XGBoost scoring", message)
+            return 0
+        logging.error(message)
+        return 1
+    if not os.path.isfile(features_path):
+        logging.error("Features file not found: %s", features_path)
+        return 1
+    import numpy as np
+    import pandas as pd
+    import xgboost as xgb
 
-# Create DMatrix with feature names
-dmat = xgb.DMatrix(X, feature_names=feature_columns)
+    model = xgb.Booster()
+    model.load_model(model_path)
+    frame = pd.read_csv(features_path, encoding="utf-8-sig", low_memory=False)
+    frame.columns = [str(column).lower().strip() for column in frame.columns]
+    columns = ["price", "atr", "ema_diff", "rsi", "garch_vol", "macd_diff"]
+    missing = [column for column in columns if column not in frame.columns]
+    if missing:
+        logging.error("Missing columns for xgboost_model.json: %s", missing)
+        return 1
+    matrix = xgb.DMatrix(frame[columns], feature_names=columns)
+    predictions = model.predict(matrix)
+    if getattr(predictions, "ndim", 1) == 2:
+        frame["signal"] = np.argmax(predictions, axis=1) - 1
+    else:
+        frame["signal"] = predictions
+    target = os.path.join(config["data_output_path"], "FXJEFE_Features_with_signals.csv")
+    frame.to_csv(target, index=False, encoding="utf-8")
+    logging.info("Wrote %s", target)
+    return 0
 
-# Make predictions (this will return probabilities for each class, shape (137, 3))
-predictions = model.predict(dmat)
 
-# Print shape and first few predictions for debugging
-print("Predictions shape:", predictions.shape)
-print("First 5 predictions:\n", predictions[:5])
+def main(argv=None):
+    from stage_support import call_main
 
-# Convert probabilities to class labels (0, 1, -1)
-# Assuming classes are ordered as [-1, 0, 1] (sell, hold, buy)
-features['signal'] = np.argmax(predictions, axis=1) - 1  # Adjust based on class mapping
+    return call_main(run, argv)
 
-# Ensure all required columns
-required_columns = ["time", "symbol", "price", "direction", "atr", "ema_diff", "rsi", "garch_vol", "macd_diff", "vwap", "price_vwap_diff", "bb_position", "signal"]
-features = features[required_columns]
 
-# Save to CSV
-features.to_csv('FXJEFE_Features_with_signals.csv', index=False)
-print("FXJEFE_Features_with_signals.csv created with model predictions")
-
-# Add logging and backup
-import logging
-logging.basicConfig(filename='signal_update.log', level=logging.INFO, format='%(asctime)s - %(message)s')
-logging.info("Started signal generation with XGBoost")
-logging.info("Finished signal generation with XGBoost")
-import shutil
-import datetime
-shutil.copy("FXJEFE_Features_with_signals.csv", f"FXJEFE_Features_with_signals_backup_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv")
+if __name__ == "__main__":
+    sys.exit(main())

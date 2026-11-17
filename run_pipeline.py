@@ -1,233 +1,168 @@
 # -*- coding: utf-8 -*-
+"""Start every FXJEFE MT5 pipeline stage in dependency order.
+
+Default mode is dry-run / paper: no live order is sent. ``--live`` is required
+before any stage is allowed to call the broker. A failed stage or an FTMO
+breach stops the pipeline.
+
+Stage order
+===========
+1. PROJECT_ROOT, config.json, FTMO rule file
+2. MT5 connection health
+3. Data
+4. Features and labels
+5. Model
+6. Signals
+7. FTMO risk gate (before any order)
+8. Execution
+9. Monitoring
 """
-run_pipeline.py
-Full FXJEFE trading pipeline — generates features from MT5, processes data,
-trains models, and prepares the AI server for the EA.
+from __future__ import annotations
 
-PIPELINE ORDER (all steps run in sequence)
-══════════════════════════════════════════
-Step 1  mt5_generate_features.py  – Pull M1 bars from MT5, compute 27 indicators
-                                     → data/FXJEFE_Features.csv
-Step 2  validate_data.py          – Validate columns, row count, NaN report
-Step 3  Load_and_Process.py       – Data quality check (columns + stats)
-Step 4  generate_labels.py        – Compute future price, add buy/hold/sell labels
-                                     → training_data.csv
-Step 5  train_models.py           – Train legacy RandomForest (28 features)
-                                     → models/my_model.pkl  (fallback for ai_server)
-Step 6  check_model_features.py   – Verify legacy model feature count matches config
-Step 7  full_pipeline.py          – Walk-forward XGB/LGB per-symbol models (MAIN)
-                                     → models/{SYMBOL}_{TF}_binary_xgb.json
-                                     → models/{SYMBOL}_{TF}_binary_features.json
-Step 8  signal_processor.py       – SMA crossover reference signals
-                                     → data/signals_output.csv
-
-The AI server (python pipeline/ai_server.py) is auto-started if not running.
-The EA (FXJEFE_ALGO_AI.mq5 / Predict.mq5) calls the server for live signals.
-
-Usage:
-  python run_pipeline.py
-  python run_pipeline.py --retry 5 --verbose
-  python run_pipeline.py --skip-server
-  python run_pipeline.py --skip-mt5          (skip step 1 if data already exists)
-"""
-
-import json
+import argparse
+import importlib
+import logging
 import os
 import sys
-import subprocess
-import logging
 import time
-import argparse
+import traceback
 
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    REQUESTS_AVAILABLE = False
+from path_resolver import ENV_VAR, ProjectRootError, load_config, require_project_root
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-MQL5_PATH    = os.path.join(
-    os.path.expandvars(r'%APPDATA%'),
-    r'MetaQuotes\Terminal\81A933A9AFC5DE3C23B15CAB19C63850\MQL5'
+# (group, module, callable). Every module exposes run(project_dir, dry_run).
+PIPELINE_STAGES = (
+    ("project", "path_validate", "run"),
+    ("project", "validate_config", "run"),
+    ("project", "ftmo_rules", "run"),
+    ("mt5_health", "mt5_health", "run"),
+    ("data", "mt5_data_sync", "run"),
+    ("data", "mt5_generate_features", "run"),
+    ("data", "mt5_generate_crypto_features", "run"),
+    ("data", "validate_data", "run"),
+    ("data", "Load_and_Process", "run"),
+    ("data", "fix_csv", "run"),
+    ("data", "fix_csv_encoding", "run"),
+    ("data", "adjust_headers", "run"),
+    ("data", "convert_encoding", "run"),
+    ("features", "generate_training_data", "run"),
+    ("features", "generate_labels", "run"),
+    ("features", "generate_new_csv", "run"),
+    ("features", "clean_training_data", "run"),
+    ("model", "train_models", "run"),
+    ("model", "feature_engineering", "run"),
+    ("model", "check_model_features", "run"),
+    ("model", "full_pipeline", "run"),
+    ("model", "model_deploy", "run"),
+    ("signals", "ensemble_predictions", "run"),
+    ("signals", "generate_signals_with_xgboost", "run"),
+    ("signals", "get_lstm_prediction", "run"),
+    ("signals", "signal_processor", "run"),
+    ("signals", "signal_gate", "run"),
+    ("signals", "mt5_signal_script", "run"),
+    ("ftmo_risk_gate", "risk_management", "run"),
+    ("execution", "process_trades", "run"),
+    ("monitoring", "merge_datasets", "run"),
+    ("monitoring", "analyze_outcomes", "run"),
+    ("monitoring", "update_database", "run"),
+    ("monitoring", "check_integrity", "run"),
+    ("monitoring", "check_labels", "run"),
+    ("monitoring", "log_summary", "run"),
 )
-CONFIG_PATH  = os.path.join(PROJECT_ROOT, 'config.json')
-LOG_DIR      = os.path.join(PROJECT_ROOT, 'Logs')
-os.makedirs(LOG_DIR, exist_ok=True)
 
 
-def load_config(path: str) -> dict:
-    for enc in ['utf-8', 'utf-8-sig', 'cp1252']:
-        try:
-            with open(path, 'r', encoding=enc) as f:
-                return json.load(f)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            continue
-    print(f"[FATAL] Cannot load config: {path}")
-    sys.exit(1)
+def configure_logging(log_dir):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    path = os.path.join(log_dir, "pipeline.log")
+    file_handler = logging.FileHandler(path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    stream = logging.StreamHandler(sys.stdout)
+    stream.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(stream)
+    return path
 
 
-# ── Ordered pipeline steps ──────────────────────────────────────────────────
-#
-# Each tuple: (script_filename, description, required?)
-# required=True  → pipeline aborts if the step fails after retries
-# required=False → pipeline logs a warning and continues
-#
-PIPELINE_STEPS = [
-    ('mt5_generate_features_wine.py',  'Step 1 — Generate features from MT5 via Wine (2000 M1 bars × 6 symbols)',   True),
-    ('validate_data.py',          'Step 2 — Validate raw feature data',                                True),
-    ('Load_and_Process.py',       'Step 3 — Data quality check (columns + stats)',                     True),
-    ('generate_labels.py',        'Step 4 — Compute future price & generate buy/hold/sell labels',     True),
-    ('train_models.py',           'Step 5 — Train legacy RandomForest → my_model.pkl (fallback)',      True),
-    ('check_model_features.py',   'Step 6 — Verify legacy model feature count matches config (28)',    True),
-    ('full_pipeline.py',          'Step 7 — Walk-forward XGB/LGB per-symbol models (main)',            False),
-    ('signal_processor.py',       'Step 8 — Generate SMA crossover reference signals',                 False),
-]
+def run_stage(module_name, project_dir, dry_run):
+    module = importlib.import_module(module_name)
+    runner = getattr(module, "run", None)
+    if runner is None:
+        raise RuntimeError("%s has no run()" % module_name)
+    code = runner(project_dir=project_dir, dry_run=dry_run)
+    if code is None:
+        return 0
+    return int(code)
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-def check_server_health(url: str) -> bool:
-    if not REQUESTS_AVAILABLE:
-        return False
-    try:
-        r = requests.get(f"{url}/health", timeout=5)
-        return r.status_code == 200 and r.json().get('status') == 'running'
-    except Exception:
-        return False
-
-
-def start_ai_server(cfg: dict) -> bool:
-    candidates = [
-        os.path.join(PROJECT_ROOT, 'python pipeline', 'ai_server.py'),
-        os.path.join(PROJECT_ROOT, 'ai_server.py'),
-    ]
-    server_path = next((p for p in candidates if os.path.exists(p)), None)
-    if not server_path:
-        logging.error("ai_server.py not found.")
-        return False
-    try:
-        flags = subprocess.CREATE_NEW_CONSOLE if sys.platform == 'win32' else 0
-        subprocess.Popen([sys.executable, server_path], creationflags=flags)
-        logging.info(f"Starting AI server: {server_path}")
-        time.sleep(7)
-        return True
-    except Exception as e:
-        logging.error(f"Failed to start AI server: {e}")
-        return False
-
-
-def run_step(script: str) -> bool:
-    script_path = os.path.join(PROJECT_ROOT, script)
-    if not os.path.exists(script_path):
-        logging.error(f"  Script not found: {script_path}")
-        return False
-    # full_pipeline.py runs walk-forward + Optuna for many symbols — needs much longer
-    timeout = 7200 if script == 'full_pipeline.py' else 600
-    try:
-        result = subprocess.run(
-            [sys.executable, script_path],
-            check=True, capture_output=True, text=True,
-            timeout=timeout
-        )
-        stdout = result.stdout.strip()
-        if stdout:
-            for line in stdout.splitlines()[-5:]:   # last 5 lines
-                logging.info(f"  [{script}] {line}")
-        return True
-    except subprocess.CalledProcessError as e:
-        stderr = (e.stderr or '').strip()
-        logging.error(f"  [{script}] FAILED (exit {e.returncode})")
-        if stderr:
-            for line in stderr.splitlines()[-10:]:
-                logging.error(f"  [{script}]   {line}")
-        return False
-    except subprocess.TimeoutExpired:
-        logging.error(f"  [{script}] TIMED OUT (600 s)")
-        return False
-
-
-# ── main ─────────────────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(description='FXJEFE Full Trading Pipeline')
-    parser.add_argument('--config',       default=CONFIG_PATH)
-    parser.add_argument('--retry',        type=int, default=3)
-    parser.add_argument('--verbose',      action='store_true')
-    parser.add_argument('--skip-server',  action='store_true',
-                        help='Skip AI server health check / auto-start')
-    parser.add_argument('--skip-mt5',     action='store_true',
-                        help='Skip MT5 data generation (use existing CSV)')
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(os.path.join(LOG_DIR, 'pipeline.log'), encoding='utf-8'),
-            logging.StreamHandler()
-        ]
-    )
-
-    cfg     = load_config(args.config)
-    ai_url  = cfg.get('ai_server_url', 'http://127.0.0.1:8080')
-
-    logging.info('=' * 60)
-    logging.info('FXJEFE Pipeline starting')
-    logging.info(f'Project   : {PROJECT_ROOT}')
-    logging.info(f'Config    : {args.config}')
-    logging.info(f'AI server : {ai_url}')
-    logging.info(f'MQL5 path : {MQL5_PATH}')
-    logging.info('=' * 60)
-
-    # ── AI server ─────────────────────────────────────────────────────────────
-    if not args.skip_server:
-        if check_server_health(ai_url):
-            logging.info('AI server already running.')
-        else:
-            logging.info('AI server not responding — starting it.')
-            if start_ai_server(cfg):
-                if check_server_health(ai_url):
-                    logging.info('AI server started OK.')
-                else:
-                    logging.warning('AI server started but health check failed — continuing.')
-            else:
-                logging.error('Could not start AI server. Aborting.')
-                sys.exit(1)
-
-    # ── Build step list ───────────────────────────────────────────────────────
-    steps = list(PIPELINE_STEPS)
-    if args.skip_mt5:
-        steps = [(s, d, r) for s, d, r in steps if s != 'mt5_generate_features_wine.py']
-        logging.info('Skipping MT5 data generation (--skip-mt5).')
-
-    total = len(steps)
-
-    # ── Run each step ─────────────────────────────────────────────────────────
-    for idx, (script, description, required) in enumerate(steps, start=1):
-        logging.info(f'[{idx}/{total}] {description}')
-
+def run(project_dir=None, dry_run=True, retry=1):
+    root = require_project_root(project_dir)
+    os.environ[ENV_VAR] = str(root)
+    os.environ["FXJEFE_DRY_RUN"] = "1" if dry_run else "0"
+    cfg = load_config(root)
+    log_path = configure_logging(cfg["log_path"])
+    logging.info("PROJECT_ROOT=%s", root)
+    logging.info("config=%s", cfg["config_path"])
+    logging.info("dry_run=%s log=%s", dry_run, log_path)
+    logging.info("stage_count=%s", len(PIPELINE_STAGES))
+    total = len(PIPELINE_STAGES)
+    for index, (group, module_name, _fn) in enumerate(PIPELINE_STAGES, start=1):
+        logging.info("[%s/%s] %s :: %s", index, total, group, module_name)
         success = False
-        for attempt in range(1, args.retry + 1):
-            if run_step(script):
+        last_code = 1
+        attempts = max(1, int(retry))
+        for attempt in range(1, attempts + 1):
+            try:
+                last_code = run_stage(module_name, str(root), dry_run)
+            except ProjectRootError:
+                raise
+            except Exception:
+                last_code = 1
+                logging.error("%s raised:\n%s", module_name, traceback.format_exc())
+            if last_code == 0:
                 success = True
+                logging.info("OK %s", module_name)
                 break
-            if attempt < args.retry:
-                logging.warning(f'  Retrying {script} ({attempt}/{args.retry}) in 3 s...')
-                time.sleep(3)
+            if attempt < attempts:
+                logging.warning("retry %s (%s/%s)", module_name, attempt, attempts)
+                time.sleep(1)
+        if not success:
+            logging.error(
+                "Pipeline aborted at %s/%s %s (%s) exit=%s",
+                index,
+                total,
+                group,
+                module_name,
+                last_code,
+            )
+            return last_code or 1
+    logging.info("Pipeline completed dry_run=%s", dry_run)
+    return 0
 
-        if success:
-            logging.info(f'  OK — {script}')
-        elif required:
-            logging.error(f'Pipeline ABORTED at step {idx}/{total}: {script} '
-                          f'failed after {args.retry} attempt(s).')
-            sys.exit(1)
-        else:
-            logging.warning(f'  SKIPPED (optional) — {script} failed but pipeline continues.')
 
-    logging.info('=' * 60)
-    logging.info('Pipeline completed — AI server ready for EA signals.')
-    logging.info('=' * 60)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="FXJEFE MT5 pipeline (paper by default)")
+    parser.add_argument("--project-dir", default=None, help="PROJECT_ROOT. Overrides %s." % ENV_VAR)
+    parser.add_argument("--config", default=None, help="Accepted for compatibility; config.json is read from PROJECT_ROOT.")
+    parser.add_argument("--retry", type=int, default=1)
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--live", action="store_true", help="Allow live broker actions after the FTMO gate.")
+    parser.add_argument("--dry-run", action="store_true", help="Paper mode (default).")
+    parser.add_argument("--skip-server", action="store_true", help="Accepted for compatibility. The AI server is not started.")
+    parser.add_argument("--skip-mt5", action="store_true", help="Accepted for compatibility. Health still runs in paper mode.")
+    args = parser.parse_args(argv)
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    dry_run = not args.live
+    try:
+        return run(project_dir=args.project_dir, dry_run=dry_run, retry=args.retry)
+    except ProjectRootError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())

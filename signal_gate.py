@@ -50,6 +50,38 @@ def can_emit_signal(*, model_loaded: bool, model_features=None, ea_features=None
     info["reasons"].append("model loaded + featureset aligned")
     return True, info
 
+def run(project_dir=None, dry_run=True):
+    """Compare configured feature lists. A refusal to emit is a successful gate decision."""
+    import json
+    import logging
+    from pathlib import Path
+    from stage_support import activate
+
+    ctx = activate("signal_gate.log", project_dir=project_dir, dry_run=dry_run)
+    features = list(ctx["config"].get("features") or [])
+    model_loaded = (Path(ctx["config"]["models_path"]) / "my_model.pkl").is_file()
+    allowed, info = can_emit_signal(
+        model_loaded=model_loaded,
+        model_features=features,
+        ea_features=features,
+        server_features=features,
+        predict_mq5_features=features,
+        generatefeatures_mq5_features=features,
+    )
+    info["dry_run"] = bool(dry_run)
+    info["note"] = "EA and mq5 feature lists default to config.json when separate lists are not installed"
+    target = Path(ctx["config"]["state_path"]) / "signal_gate.json"
+    target.write_text(json.dumps(info, indent=2, default=str) + "\n", encoding="utf-8")
+    logging.info("signal gate emit=%s reasons=%s", allowed, info.get("reasons"))
+    return 0
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
+
 if __name__ == "__main__":
-    f = ["price", "atr", "rsi"]
-    print(can_emit_signal(model_loaded=True, model_features=f, ea_features=f, server_features=f, predict_mq5_features=f, generatefeatures_mq5_features=f))
+    import sys
+    sys.exit(main())

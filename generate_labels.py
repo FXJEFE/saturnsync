@@ -8,28 +8,11 @@ and writes:
   data/training_data.csv   ← consumed by train_models.py
 """
 import os
-import json
 import logging
 import numpy as np
 import pandas as pd
-from textblob import TextBlob
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-os.makedirs(config['log_path'],        exist_ok=True)
-os.makedirs(config['data_output_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'generate_labels.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+config = {}
 
 # 27 model features (matches config['features'] after removing 'price')
 MODEL_FEATURES = [
@@ -62,12 +45,21 @@ SENTIMENT_MAP = {
     "XRPUSD": "Speculative neutral",
 }
 
+_SENTIMENT_CACHE = {}
+
+
 def get_sentiment(symbol):
-    text = SENTIMENT_MAP.get(str(symbol).strip(), "Neutral")
+    key = str(symbol).replace(".r", "").replace(".R", "").strip()
+    if key in _SENTIMENT_CACHE:
+        return _SENTIMENT_CACHE[key]
+    text = SENTIMENT_MAP.get(key, "Neutral")
     try:
-        return TextBlob(text).sentiment.polarity
+        from textblob import TextBlob
+        value = TextBlob(text).sentiment.polarity
     except Exception:
-        return 0.0
+        value = 0.0
+    _SENTIMENT_CACHE[key] = value
+    return value
 
 def generate_labels(df):
     df = df.copy()
@@ -108,13 +100,13 @@ def main():
     if not os.path.exists(input_path):
         logging.error(f"Input file not found: {input_path}")
         logging.error("Run mt5_data_sync.py (or GenerateFeatures.mq5) first.")
-        raise FileNotFoundError(input_path)
+        return 1
 
     df = pd.read_csv(input_path, encoding='utf-8-sig', low_memory=False)
     logging.info(f"Read {len(df)} rows.  Columns: {list(df.columns)}")
 
-    # Ensure all expected columns exist
-    all_cols = ['time', 'symbol', 'price'] + MODEL_FEATURES + ['signal']
+    # Ensure all expected columns exist, including any config feature such as garch_vol.
+    all_cols = ['time', 'symbol', 'price'] + MODEL_FEATURES + list(config.get('features') or []) + ['signal']
     for col in all_cols:
         if col not in df.columns:
             df[col] = '' if col in ('time', 'symbol', 'signal') else 0.0
@@ -150,9 +142,22 @@ def main():
     missing = [c for c in train_cols if c not in df.columns]
     if missing:
         logging.error(f"Missing training columns: {missing}")
-        raise ValueError(f"Missing columns: {missing}")
+        return 1
     df[train_cols].dropna().to_csv(training_path, encoding='utf-8', index=False)
     logging.info(f"Saved training CSV → {training_path}  ({len(df)} rows)")
+    return 0
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config
+    ctx = activate("generate_labels.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    return main()
+
 
 if __name__ == '__main__':
-    main()
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

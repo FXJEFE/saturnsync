@@ -12,8 +12,6 @@ directly from MT5's GenerateFeatures.mq5 (pre-computed indicators), the
 recalculation step is skipped and existing feature columns are used as-is.
 """
 import os
-import sys
-import json
 import logging
 import numpy as np
 import pandas as pd
@@ -23,52 +21,37 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import accuracy_score
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+config = {}
+DRY_RUN = True
+OPTUNA_AVAILABLE = False
+XGBOOST_AVAILABLE = False
+LGBM_AVAILABLE = False
+TALIB_AVAILABLE = False
+OHLCV_COLS = ['open', 'high', 'low', 'close', 'volume']
 
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
 
-os.makedirs(config['log_path'],    exist_ok=True)
-os.makedirs(config['models_path'], exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(config['log_path'], 'feature_engineering.log'), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-
-# Optional heavy imports
-try:
-    import optuna
-    OPTUNA_AVAILABLE = True
-except ImportError:
-    OPTUNA_AVAILABLE = False
-    logging.warning("optuna not installed — XGBoost will use default hyperparameters.")
-
-try:
-    from xgboost import XGBClassifier
-    XGBOOST_AVAILABLE = True
-except ImportError:
-    XGBOOST_AVAILABLE = False
-    logging.warning("xgboost not installed — stacking model will use RandomForest as fallback.")
-
-try:
-    from lightgbm import LGBMClassifier
-    LGBM_AVAILABLE = True
-except ImportError:
-    LGBM_AVAILABLE = False
-    logging.warning("lightgbm not installed — stacking model will use RandomForest as fallback.")
-
-try:
-    import talib
-    TALIB_AVAILABLE = True
-except ImportError:
-    TALIB_AVAILABLE = False
-
-OHLCV_COLS = config.get('ohlcv_columns', ['open', 'high', 'low', 'close', 'volume'])
+def _load_optional():
+    global OPTUNA_AVAILABLE, XGBOOST_AVAILABLE, LGBM_AVAILABLE, TALIB_AVAILABLE
+    try:
+        import optuna  # noqa: F401
+        OPTUNA_AVAILABLE = True
+    except ImportError:
+        OPTUNA_AVAILABLE = False
+    try:
+        from xgboost import XGBClassifier  # noqa: F401
+        XGBOOST_AVAILABLE = True
+    except ImportError:
+        XGBOOST_AVAILABLE = False
+    try:
+        from lightgbm import LGBMClassifier  # noqa: F401
+        LGBM_AVAILABLE = True
+    except ImportError:
+        LGBM_AVAILABLE = False
+    try:
+        import talib  # noqa: F401
+        TALIB_AVAILABLE = True
+    except ImportError:
+        TALIB_AVAILABLE = False
 
 
 # ── indicator recalculation (only when raw OHLCV is present) ────────────────
@@ -82,6 +65,7 @@ def recalculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['price'] = df['close']
 
     if TALIB_AVAILABLE:
+        import talib
         logging.info("Recalculating indicators via TA-Lib.")
         df['rsi']      = talib.RSI(df['close'], timeperiod=14)
         macd, sig, _   = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
@@ -126,6 +110,9 @@ def recalculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # ── hyperparameter optimisation ──────────────────────────────────────────────
 
 def optimize_xgboost(X_train, y_train) -> dict:
+    if DRY_RUN:
+        logging.info("Paper mode uses default XGBoost parameters.")
+        return {'n_estimators': 20, 'max_depth': 3, 'learning_rate': 0.1, 'subsample': 0.8}
     if OPTUNA_AVAILABLE and XGBOOST_AVAILABLE:
         logging.info("Tuning XGBoost with Optuna (20 trials).")
 
@@ -153,6 +140,9 @@ def optimize_xgboost(X_train, y_train) -> dict:
 
 
 def optimize_lightgbm(X_train, y_train) -> dict:
+    if DRY_RUN:
+        logging.info("Paper mode uses default LightGBM parameters.")
+        return {'n_estimators': 20, 'max_depth': 3, 'learning_rate': 0.1, 'subsample': 0.8}
     if LGBM_AVAILABLE:
         logging.info("Tuning LightGBM with GridSearchCV.")
         param_grid = {
@@ -177,14 +167,15 @@ def build_estimators(xgb_params: dict, lgbm_params: dict) -> list:
     from sklearn.ensemble import RandomForestClassifier
     estimators = []
     if XGBOOST_AVAILABLE:
+        from xgboost import XGBClassifier
         estimators.append(('xgboost', XGBClassifier(
-            **xgb_params, random_state=42,
-            use_label_encoder=False, eval_metric='mlogloss'
+            **xgb_params, random_state=42, eval_metric='mlogloss'
         )))
     else:
         estimators.append(('rf1', RandomForestClassifier(n_estimators=100, random_state=42)))
 
     if LGBM_AVAILABLE:
+        from lightgbm import LGBMClassifier
         estimators.append(('lightgbm', LGBMClassifier(**lgbm_params, random_state=42, verbose=-1)))
     else:
         estimators.append(('rf2', RandomForestClassifier(n_estimators=100, random_state=43)))
@@ -193,13 +184,19 @@ def build_estimators(xgb_params: dict, lgbm_params: dict) -> list:
 
 
 def train_stacking_model(X_train, y_train, xgb_params: dict, lgbm_params: dict):
+    if DRY_RUN:
+        from sklearn.ensemble import RandomForestClassifier
+        logging.info("Paper mode trains a small RandomForest instead of a full stack.")
+        model = RandomForestClassifier(n_estimators=20, random_state=42, n_jobs=1)
+        model.fit(X_train, y_train)
+        return model
     logging.info("Training stacking classifier (XGBoost + LightGBM → LogisticRegression).")
     estimators = build_estimators(xgb_params, lgbm_params)
     stacking = StackingClassifier(
         estimators=estimators,
         final_estimator=LogisticRegression(max_iter=1000),
         cv=3,
-        n_jobs=-1
+        n_jobs=1
     )
     stacking.fit(X_train, y_train)
     logging.info("Stacking model trained.")
@@ -215,14 +212,14 @@ def main():
     if not os.path.exists(csv_path):
         logging.error(f"Input file not found: {csv_path}")
         logging.error("Run generate_labels.py first.")
-        sys.exit(1)
+        return 1
 
     df = pd.read_csv(csv_path, encoding='utf-8', low_memory=False)
     logging.info(f"Loaded {len(df)} rows from {csv_path}")
 
     if len(df) < 26:
         logging.error(f"Insufficient rows ({len(df)}). Need at least 26.")
-        sys.exit(1)
+        return 1
 
     # Only recalculate indicators if raw OHLCV columns are present
     # (MT5 pre-computed features skip this step)
@@ -241,16 +238,16 @@ def main():
         logging.warning(f"Missing features (will predict with {len(available)}): {missing}")
     if not available:
         logging.error("No features available — aborting.")
-        sys.exit(1)
+        return 1
 
     if 'label' not in df.columns:
         logging.error("'label' column not found. Run generate_labels.py first.")
-        sys.exit(1)
+        return 1
 
     data = df[available + ['label']].dropna()
     if len(data) < 26:
         logging.error(f"Only {len(data)} usable rows after dropping NaNs.")
-        sys.exit(1)
+        return 1
 
     X = data[available]
     y = data['label']
@@ -282,11 +279,22 @@ def main():
     logging.info(f"Processed features saved → {out_path}")
 
     logging.info("feature_engineering.py completed successfully.")
+    return 0
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config, DRY_RUN, OHLCV_COLS
+    ctx = activate("feature_engineering.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    DRY_RUN = bool(dry_run)
+    OHLCV_COLS = config.get('ohlcv_columns', ['open', 'high', 'low', 'close', 'volume'])
+    _load_optional()
+    return main()
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as e:
-        logging.error(f"feature_engineering.py failed: {e}")
-        raise
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -82,20 +83,44 @@ DEST_MAP: Dict[str, str] = {
     "mt5_signal_script.py": "bridge",
 }
 
+# Execution order is run_pipeline.PIPELINE_STAGES. This list is the same set.
 PRODUCTION_ORDER: List[str] = [
     "path_validate.py",
+    "validate_config.py",
+    "ftmo_rules.py",
+    "mt5_health.py",
     "mt5_data_sync.py",
     "mt5_generate_features.py",
+    "mt5_generate_crypto_features.py",
     "validate_data.py",
     "Load_and_Process.py",
+    "fix_csv.py",
+    "fix_csv_encoding.py",
     "adjust_headers.py",
+    "convert_encoding.py",
+    "generate_training_data.py",
     "generate_labels.py",
-    "feature_engineering.py",
+    "generate_new_csv.py",
+    "clean_training_data.py",
     "train_models.py",
+    "feature_engineering.py",
     "check_model_features.py",
     "full_pipeline.py",
-    "signal_processor.py",
     "model_deploy.py",
+    "ensemble_predictions.py",
+    "generate_signals_with_xgboost.py",
+    "get_lstm_prediction.py",
+    "signal_processor.py",
+    "signal_gate.py",
+    "mt5_signal_script.py",
+    "risk_management.py",
+    "process_trades.py",
+    "merge_datasets.py",
+    "analyze_outcomes.py",
+    "update_database.py",
+    "check_integrity.py",
+    "check_labels.py",
+    "log_summary.py",
 ]
 
 
@@ -108,11 +133,10 @@ def _sha256(path: Path) -> str:
 
 
 def project_root() -> Path:
-    if sys.platform == "win32":
-        home = Path(os.environ.get("USERPROFILE", str(Path.home())))
-    else:
-        home = Path.home()
-    return home / "Documents" / "FXJEFE_Project"
+    from path_resolver import resolve_project_root
+
+    root, _source = resolve_project_root()
+    return root
 
 
 def discover_scripts(search_roots: List[Path]) -> Dict[str, Path]:
@@ -184,8 +208,16 @@ def relocate(
             if not dry_run and entry["action"] in ("installed_missing", "force_replaced_with_backup"):
                 text = src.read_text(encoding="utf-8", errors="replace")
                 if name == "mt5_signal_script.py":
-                    text = text.replace('password = "*pb5BEU?s4f"', 'password = os.environ.get("MT5_PASSWORD", "")')
-                    text = text.replace("account = 1512751258", 'account = int(os.environ.get("MT5_ACCOUNT", "0"))')
+                    text = re.sub(
+                        r"password\s*=\s*(['\"]).*?\1",
+                        'password = os.environ.get("MT5_PASSWORD", "")',
+                        text,
+                    )
+                    text = re.sub(
+                        r"account\s*=\s*\d{5,}",
+                        'account = int(os.environ.get("MT5_ACCOUNT", "0"))',
+                        text,
+                    )
                     dest.write_text(text, encoding="utf-8")
                 else:
                     shutil.copy2(src, dest)

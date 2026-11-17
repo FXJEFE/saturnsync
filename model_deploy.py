@@ -3,32 +3,30 @@ Deploy trained models (.onnx, .pkl, .json) to all configured MT5 terminals.
 Copies from models/ to each terminal's MQL5/Files/ folder.
 """
 import os
-import json
 import shutil
 from datetime import datetime
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
-MODELS_DIR = config['models_path']
-EXTENSIONS = ['.onnx', '.json']  # Only deploy inference-ready files
-# Add '.pkl' to EXTENSIONS if your server.py loads pkl files
+config = {}
+MODELS_DIR = ""
+EXTENSIONS = ['.onnx', '.json', '.pkl']
 
 def deploy():
-    terminals = config.get('mt5_terminals', [])
+    terminals = list(config.get('mt5_terminals') or [])
+    files_path = (config.get('mt5_files_path') or '').strip()
+    if not terminals and files_path:
+        terminals = [{'name': 'Default', 'files_path': files_path}]
     if not terminals:
-        # Fallback to single path
-        terminals = [{'name': 'Default', 'files_path': config['mt5_files_path']}]
+        print("No MT5 files path configured; model files stay in %s" % MODELS_DIR)
+        return 0
 
     model_files = [f for f in os.listdir(MODELS_DIR)
                    if any(f.endswith(ext) for ext in EXTENSIONS)]
 
     if not model_files:
         print("No model files found to deploy.")
-        print(f"  Looked in: {MODELS_DIR}")
-        print(f"  Extensions: {EXTENSIONS}")
-        return
+        print("  Looked in: %s" % MODELS_DIR)
+        print("  Extensions: %s" % EXTENSIONS)
+        return 0
 
     print(f"Found {len(model_files)} model files to deploy:")
     for f in model_files:
@@ -63,8 +61,24 @@ def deploy():
             print(f"  Copied {f}")
         print()
 
-    print(f"Deployment complete at {datetime.now():%Y-%m-%d %H:%M:%S}")
+    print("Deployment complete at %s" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    return 0
+
+
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
+
+    global config, MODELS_DIR
+    ctx = activate("model_deploy.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    MODELS_DIR = config["models_path"]
+    if not os.path.isdir(MODELS_DIR):
+        print("Models directory missing: %s" % MODELS_DIR)
+        return 1
+    return deploy() or 0
 
 
 if __name__ == '__main__':
-    deploy()
+    import sys
+    from stage_support import call_main
+    sys.exit(call_main(run))

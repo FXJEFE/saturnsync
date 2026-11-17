@@ -1,66 +1,43 @@
 # -*- coding: utf-8 -*-
-import json
-import os
+"""Outer-join features and trades on time + symbol when both files exist."""
+from __future__ import annotations
+
 import logging
-
-# Path to the config file
-CONFIG_PATH = 'C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json'
-
-# Load the config file safely
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    print(f"Error: Could not find config file at {CONFIG_PATH}")
-    exit(1)
-except json.JSONDecodeError as e:
-    print(f"Error: Config file has invalid format - {e}")
-    exit(1)
-
-# Set up logging
-log_file = os.path.join(config['log_path'], 'script.log')  # Change 'script.log' to match the script's name
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logging.info("Script started and configuration loaded successfully")
-
-import json
 import os
-with open('C:\\Users\\LarryLocal\\Documents\\FXJEFE_Project\\config.json', 'r') as f:
-    config = json.load(f)
-import json
-import logging
-import pandas as pd
-import os
+import sys
 
-# Load configuration
-with open('config.json', 'r') as f:
-    config = json.load(f)
 
-# Set up logging
-logging.basicConfig(filename=os.path.join(config['log_path'], 'pipeline.log'), level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+def run(project_dir=None, dry_run=True):
+    from stage_support import activate
 
-def merge_datasets():
-    """Merge features and trades datasets."""
-    features_csv = os.path.join(config['data_output_path'], 'FXJEFE_Features.csv')
-    trades_csv = os.path.join(config['data_output_path'], 'FXJEFE_trades.csv')
-    output_csv = os.path.join(config['data_output_path'], 'FXJEFE_merged.csv')
-    
-    if not os.path.exists(features_csv) or not os.path.exists(trades_csv):
-        logging.error(f"Required files missing: {features_csv}, {trades_csv}")
-        return
-    
-    features_df = pd.read_csv(features_csv)
-    trades_df = pd.read_csv(trades_csv)
-    merged_df = pd.merge(features_df, trades_df, on=['time', 'symbol'], how='outer')
-    merged_df.to_csv(output_csv, index=False)
-    logging.info(f"Merged datasets and saved to {output_csv}")
+    ctx = activate("merge_datasets.log", project_dir=project_dir, dry_run=dry_run)
+    config = ctx["config"]
+    features = os.path.join(config["data_path"], "FXJEFE_Features.csv")
+    trades = os.path.join(config["data_output_path"], "FXJEFE_trades.csv")
+    target = os.path.join(config["data_output_path"], "FXJEFE_merged.csv")
+    if not os.path.isfile(features) or not os.path.isfile(trades):
+        logging.info("Merge skipped; features=%s trades=%s", os.path.isfile(features), os.path.isfile(trades))
+        return 0
+    import pandas as pd
+
+    left = pd.read_csv(features)
+    right = pd.read_csv(trades)
+    keys = [key for key in ("time", "symbol") if key in left.columns and key in right.columns]
+    if not keys:
+        logging.info("No shared time/symbol columns; wrote features only")
+        left.to_csv(target, index=False, encoding="utf-8")
+        return 0
+    merged = pd.merge(left, right, on=keys, how="outer")
+    merged.to_csv(target, index=False, encoding="utf-8")
+    logging.info("Wrote %s (%s rows)", target, len(merged))
+    return 0
+
+
+def main(argv=None):
+    from stage_support import call_main
+
+    return call_main(run, argv)
+
 
 if __name__ == "__main__":
-    merge_datasets()
+    sys.exit(main())
